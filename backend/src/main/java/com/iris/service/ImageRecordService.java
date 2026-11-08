@@ -12,6 +12,7 @@ import com.iris.repository.VerificationRepository;
 import com.iris.stego.ImageCodec;
 import com.iris.stego.PerceptualHash;
 import com.iris.stego.Steganography;
+import com.iris.stego.WatermarkCrypto;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -21,6 +22,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Paths;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
 
@@ -31,6 +33,7 @@ public class ImageRecordService {
     private final VerificationRepository verificationRepository;
     private final FileStorageService storageService;
     private final ImageValidator imageValidator;
+    private final WatermarkCrypto watermarkCrypto;
     private final AuditService auditService;
 
     public ImageRecordService(
@@ -38,12 +41,14 @@ public class ImageRecordService {
             VerificationRepository verificationRepository,
             FileStorageService storageService,
             ImageValidator imageValidator,
+            WatermarkCrypto watermarkCrypto,
             AuditService auditService
     ) {
         this.recordRepository = recordRepository;
         this.verificationRepository = verificationRepository;
         this.storageService = storageService;
         this.imageValidator = imageValidator;
+        this.watermarkCrypto = watermarkCrypto;
         this.auditService = auditService;
     }
 
@@ -83,9 +88,12 @@ public class ImageRecordService {
             throw ex;
         }
 
-        String token = UUID.randomUUID().toString().replace("-", "");
-        Steganography.EmbedResult embedded = Steganography.embed(validation.bufferedImage(), token);
+        String token = UUID.randomUUID().toString().replace("-", "").substring(0, Steganography.TOKEN_BYTES * 2);
+        byte[] tokenBytes = HexFormat.of().parseHex(token);
+        byte[] mac = watermarkCrypto.mac(tokenBytes);
+        Steganography.EmbedResult embedded = Steganography.embed(validation.bufferedImage(), tokenBytes, mac);
         byte[] signedBytes = ImageCodec.toPng(embedded.image());
+        List<Long> hashes = PerceptualHash.computeVariants(validation.bufferedImage());
 
         FileStorageService.StoredFileResult originalStored = null;
         FileStorageService.StoredFileResult signedStored = null;
@@ -101,7 +109,8 @@ public class ImageRecordService {
             record.setSignedStorageKey(signedStored.storageKey());
             record.setOriginalChecksum(originalStored.checksum());
             record.setSignedChecksum(signedStored.checksum());
-            record.setPerceptualHash(PerceptualHash.toHex(PerceptualHash.compute(validation.bufferedImage())));
+            record.setPerceptualHash(PerceptualHash.toHex(hashes.get(0)));
+            record.setPerceptualHashes(PerceptualHash.toCsv(hashes));
             record.setWidth(validation.width());
             record.setHeight(validation.height());
             record.setOriginalSize(originalStored.size());

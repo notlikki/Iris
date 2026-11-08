@@ -16,6 +16,8 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
 import javax.imageio.ImageIO;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -27,7 +29,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest
 @AutoConfigureMockMvc
-@TestPropertySource(properties = "iris.storage.upload-dir=target/test-storage")
+@TestPropertySource(properties = {
+        "iris.storage.upload-dir=target/test-storage",
+        "spring.datasource.url=jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1"
+})
 class RecordIntegrationTest {
 
     @Autowired
@@ -112,6 +117,55 @@ class RecordIntegrationTest {
     }
 
     @Test
+    @DisplayName("A cropped image still recovers the record through the robust layer")
+    void croppedImageMatchesThroughRobustLayer() throws Exception {
+        JsonNode record = register(samplePng(512, 384, 31), "crop-source.png");
+        long id = record.get("id").asLong();
+
+        byte[] signed = download(record.get("signedUrl").asText());
+        BufferedImage source = ImageIO.read(new ByteArrayInputStream(signed));
+        BufferedImage cropped = source.getSubimage(37, 21, source.getWidth() - 37, source.getHeight() - 21);
+
+        JsonNode verification = verify(toPng(cropped), "cropped.png");
+
+        assertTrue(verification.get("matched").asBoolean(), "Cropped image should still match");
+        assertEquals(id, verification.get("record").get("id").asLong());
+        assertEquals("SPREAD", verification.get("method").asText());
+    }
+
+    @Test
+    @DisplayName("A rotated image matches through a perceptual hash variant")
+    void rotatedImageMatchesThroughPerceptualHash() throws Exception {
+        JsonNode record = register(samplePng(512, 384, 33), "rotate-source.png");
+        long id = record.get("id").asLong();
+
+        byte[] signed = download(record.get("signedUrl").asText());
+        BufferedImage source = ImageIO.read(new ByteArrayInputStream(signed));
+
+        JsonNode verification = verify(toPng(rotate90(source)), "rotated.png");
+
+        assertTrue(verification.get("matched").asBoolean(), "Rotated image should still match");
+        assertEquals(id, verification.get("record").get("id").asLong());
+        assertEquals("PHASH", verification.get("method").asText());
+    }
+
+    @Test
+    @DisplayName("A resized image matches through a perceptual hash variant")
+    void resizedImageMatchesThroughPerceptualHash() throws Exception {
+        JsonNode record = register(samplePng(512, 384, 35), "resize-source.png");
+        long id = record.get("id").asLong();
+
+        byte[] signed = download(record.get("signedUrl").asText());
+        BufferedImage source = ImageIO.read(new ByteArrayInputStream(signed));
+
+        JsonNode verification = verify(toPng(resize(source, 0.7)), "resized.png");
+
+        assertTrue(verification.get("matched").asBoolean(), "Resized image should still match");
+        assertEquals(id, verification.get("record").get("id").asLong());
+        assertEquals("PHASH", verification.get("method").asText());
+    }
+
+    @Test
     @DisplayName("Deleting a record removes it and its files")
     void deleteRemovesRecord() throws Exception {
         JsonNode record = register(samplePng(384, 256, 21), "delete-me.png");
@@ -181,6 +235,35 @@ class RecordIntegrationTest {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         ImageIO.write(adjusted, "jpg", out);
         return out.toByteArray();
+    }
+
+    private byte[] toPng(BufferedImage image) throws Exception {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ImageIO.write(image, "png", out);
+        return out.toByteArray();
+    }
+
+    private BufferedImage rotate90(BufferedImage source) {
+        int width = source.getWidth();
+        int height = source.getHeight();
+        BufferedImage out = new BufferedImage(height, width, BufferedImage.TYPE_INT_RGB);
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                out.setRGB(height - 1 - y, x, source.getRGB(x, y));
+            }
+        }
+        return out;
+    }
+
+    private BufferedImage resize(BufferedImage source, double scale) {
+        int width = Math.max(1, (int) Math.round(source.getWidth() * scale));
+        int height = Math.max(1, (int) Math.round(source.getHeight() * scale));
+        BufferedImage out = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = out.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+        g.drawImage(source, 0, 0, width, height, null);
+        g.dispose();
+        return out;
     }
 
     private byte[] samplePng(int width, int height, long seed) throws Exception {

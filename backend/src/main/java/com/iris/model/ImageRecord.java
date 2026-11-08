@@ -38,6 +38,9 @@ public class ImageRecord {
     @Column(nullable = false, length = 16)
     private String perceptualHash;
 
+    @Column(nullable = false, length = 255)
+    private String perceptualHashes;
+
     @Column(nullable = false)
     private Integer width;
 
@@ -143,6 +146,14 @@ public class ImageRecord {
 
     public void setPerceptualHash(String perceptualHash) {
         this.perceptualHash = perceptualHash;
+    }
+
+    public String getPerceptualHashes() {
+        return perceptualHashes;
+    }
+
+    public void setPerceptualHashes(String perceptualHashes) {
+        this.perceptualHashes = perceptualHashes;
     }
 
     public Integer getWidth() {

@@ -13,6 +13,7 @@ import com.iris.repository.VerificationRepository;
 import com.iris.stego.ImageCodec;
 import com.iris.stego.PerceptualHash;
 import com.iris.stego.Steganography;
+import com.iris.stego.WatermarkCrypto;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -27,6 +28,7 @@ import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
+import java.util.List;
 
 @Service
 public class VerificationService {
@@ -39,6 +41,7 @@ public class VerificationService {
     private final FileStorageService storageService;
     private final ImageValidator imageValidator;
     private final ImageRecordService imageRecordService;
+    private final WatermarkCrypto watermarkCrypto;
     private final AuditService auditService;
 
     public VerificationService(
@@ -47,6 +50,7 @@ public class VerificationService {
             FileStorageService storageService,
             ImageValidator imageValidator,
             ImageRecordService imageRecordService,
+            WatermarkCrypto watermarkCrypto,
             AuditService auditService
     ) {
         this.recordRepository = recordRepository;
@@ -54,6 +58,7 @@ public class VerificationService {
         this.storageService = storageService;
         this.imageValidator = imageValidator;
         this.imageRecordService = imageRecordService;
+        this.watermarkCrypto = watermarkCrypto;
         this.auditService = auditService;
     }
 
@@ -85,16 +90,25 @@ public class VerificationService {
         BufferedImage candidate = validation.bufferedImage();
         String candidateChecksum = sha256(fileBytes);
 
-        String token = Steganography.extractLsb(candidate);
-        ImageRecord record = token == null ? null : recordRepository.findByToken(token).orElse(null);
-        String method = record != null ? "LSB" : null;
+        String token = null;
+        ImageRecord record = null;
+        String method = null;
+
+        Steganography.Extracted lsb = Steganography.extractLsb(candidate);
+        if (lsb != null && watermarkCrypto.verify(lsb.token(), lsb.mac())) {
+            token = HexFormat.of().formatHex(lsb.token());
+            record = recordRepository.findByToken(token).orElse(null);
+            if (record != null) {
+                method = "LSB";
+            }
+        }
 
         if (record == null) {
-            String robustToken = Steganography.extractRobust(candidate);
-            if (robustToken != null) {
-                record = recordRepository.findByToken(robustToken).orElse(null);
+            Steganography.Extracted robust = Steganography.extractRobust(candidate);
+            if (robust != null && watermarkCrypto.verify(robust.token(), robust.mac())) {
+                token = HexFormat.of().formatHex(robust.token());
+                record = recordRepository.findByToken(token).orElse(null);
                 if (record != null) {
-                    token = robustToken;
                     method = "SPREAD";
                 }
             }
@@ -105,8 +119,7 @@ public class VerificationService {
             ImageRecord nearest = null;
             int bestDistance = Integer.MAX_VALUE;
             for (ImageRecord candidateRecord : recordRepository.findAll()) {
-                int distance = PerceptualHash.distance(candidateHash,
-                        PerceptualHash.fromHex(candidateRecord.getPerceptualHash()));
+                int distance = minDistance(candidateHash, candidateRecord);
                 if (distance < bestDistance) {
                     bestDistance = distance;
                     nearest = candidateRecord;
@@ -139,8 +152,7 @@ public class VerificationService {
             dimensionMatch = original.getWidth() == candidate.getWidth()
                     && original.getHeight() == candidate.getHeight();
 
-            long originalHash = PerceptualHash.compute(original);
-            perceptualDistance = PerceptualHash.distance(originalHash, candidateHash);
+            perceptualDistance = minDistance(candidateHash, record);
             similarity = 1.0 - perceptualDistance / 64.0;
 
             DiffResult diff = buildDiff(original, candidate);
@@ -208,6 +220,14 @@ public class VerificationService {
     private Verification requireVerification(Long id) {
         return verificationRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Verification with ID " + id + " was not found."));
+    }
+
+    private int minDistance(long hash, ImageRecord record) {
+        List<Long> variants = PerceptualHash.parseCsv(record.getPerceptualHashes());
+        if (variants.isEmpty()) {
+            variants = List.of(PerceptualHash.fromHex(record.getPerceptualHash()));
+        }
+        return PerceptualHash.minDistance(hash, variants);
     }
 
     private DiffResult buildDiff(BufferedImage original, BufferedImage candidate) {

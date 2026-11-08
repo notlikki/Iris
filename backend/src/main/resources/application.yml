@@ -5,7 +5,7 @@ spring:
   application:
     name: iris-backend
   datasource:
-    url: jdbc:h2:mem:irisdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    url: "jdbc:h2:file:${IRIS_DB_PATH:./data/irisdb};DB_CLOSE_ON_EXIT=FALSE"
     driver-class-name: org.h2.Driver
     username: sa
     password: ""
@@ -26,6 +26,8 @@ spring:
       static-locations: "file:${iris.frontend-dir}/,classpath:/static/"
 
 iris:
+  signing:
+    secret: ${IRIS_SIGNING_SECRET:iris-local-dev-secret-change-me}
   storage:
     upload-dir: ${IRIS_STORAGE_DIR:data/storage}
     max-width: 4096

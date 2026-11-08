@@ -6,48 +6,61 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import javax.imageio.ImageIO;
+import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.HexFormat;
+import java.util.List;
 import java.util.Random;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class SteganographyTest {
 
-    private static final String TOKEN = "0123456789abcdef0123456789abcdef";
+    private static final String TOKEN_HEX = "0123456789abcdef";
+    private static final byte[] MAC = {0x11, 0x22, 0x33, 0x44};
 
-    @Test
-    @DisplayName("LSB layer recovers the token exactly from a lossless image")
-    void lsbRoundTrip() {
-        BufferedImage image = sampleImage(320, 240, 7);
-        Steganography.EmbedResult result = Steganography.embed(image, TOKEN);
-
-        assertTrue(result.lsbEmbedded());
-        assertEquals(5, result.lsbCopies());
-        assertEquals(TOKEN, Steganography.extractLsb(result.image()));
+    private byte[] token() {
+        return HexFormat.of().parseHex(TOKEN_HEX);
     }
 
     @Test
-    @DisplayName("Robust layer recovers the token from the signed image")
+    @DisplayName("LSB layer recovers the token and MAC exactly from a lossless image")
+    void lsbRoundTrip() {
+        BufferedImage image = sampleImage(320, 240, 7);
+        Steganography.EmbedResult result = Steganography.embed(image, token(), MAC);
+
+        assertTrue(result.lsbEmbedded());
+        assertEquals(5, result.lsbCopies());
+
+        Steganography.Extracted extracted = Steganography.extractLsb(result.image());
+        assertNotNull(extracted);
+        assertArrayEquals(token(), extracted.token());
+        assertArrayEquals(MAC, extracted.mac());
+    }
+
+    @Test
+    @DisplayName("Robust layer recovers the token and MAC from the signed image")
     void robustRoundTrip() {
         BufferedImage image = sampleImage(512, 384, 11);
-        Steganography.EmbedResult result = Steganography.embed(image, TOKEN);
+        Steganography.EmbedResult result = Steganography.embed(image, token(), MAC);
 
         assertTrue(result.robustEmbedded());
-        assertTrue(result.robustCopies() >= 3);
-        assertEquals(TOKEN, Steganography.extractRobust(result.image()));
+        assertTrue(result.robustCopies() >= 2);
+
+        assertPayload(Steganography.extractRobust(result.image()));
     }
 
     @Test
     @DisplayName("Robust layer survives JPEG re-compression")
     void robustSurvivesJpeg() throws IOException {
         BufferedImage image = sampleImage(512, 384, 13);
-        BufferedImage signed = Steganography.embed(image, TOKEN).image();
+        BufferedImage signed = Steganography.embed(image, token(), MAC).image();
 
         BufferedImage jpeg = roundTripJpeg(signed);
-        assertEquals(TOKEN, Steganography.extractRobust(jpeg));
+        assertPayload(Steganography.extractRobust(jpeg));
         assertNull(Steganography.extractLsb(jpeg), "LSB payload should not survive lossy compression");
     }
 
@@ -55,7 +68,7 @@ class SteganographyTest {
     @DisplayName("Robust layer survives brightness and contrast changes")
     void robustSurvivesToneChanges() {
         BufferedImage image = sampleImage(512, 384, 17);
-        BufferedImage signed = Steganography.embed(image, TOKEN).image();
+        BufferedImage signed = Steganography.embed(image, token(), MAC).image();
 
         BufferedImage adjusted = new BufferedImage(signed.getWidth(), signed.getHeight(), BufferedImage.TYPE_INT_RGB);
         for (int y = 0; y < signed.getHeight(); y++) {
@@ -68,7 +81,38 @@ class SteganographyTest {
             }
         }
 
-        assertEquals(TOKEN, Steganography.extractRobust(adjusted));
+        assertPayload(Steganography.extractRobust(adjusted));
+    }
+
+    @Test
+    @DisplayName("Robust layer survives an arbitrary crop")
+    void robustSurvivesCrop() {
+        BufferedImage image = sampleImage(512, 384, 23);
+        BufferedImage signed = Steganography.embed(image, token(), MAC).image();
+
+        BufferedImage cropped = signed.getSubimage(37, 21, signed.getWidth() - 37, signed.getHeight() - 21);
+        assertPayload(Steganography.extractRobust(cropped));
+    }
+
+    @Test
+    @DisplayName("Robust layer survives a centre crop")
+    void robustSurvivesCentreCrop() {
+        BufferedImage image = sampleImage(640, 480, 29);
+        BufferedImage signed = Steganography.embed(image, token(), MAC).image();
+
+        BufferedImage cropped = signed.getSubimage(80, 60, 440, 330);
+        assertPayload(Steganography.extractRobust(cropped));
+    }
+
+    @Test
+    @DisplayName("Perceptual hash variants match a rotated image")
+    void perceptualHashVariantsMatchRotation() {
+        BufferedImage image = sampleImage(512, 384, 19);
+        List<Long> variants = PerceptualHash.computeVariants(image);
+
+        long rotatedHash = PerceptualHash.compute(rotate90(image));
+        assertTrue(PerceptualHash.minDistance(rotatedHash, variants) <= 8,
+                "A 90-degree rotation should match one of the stored orientation hashes");
     }
 
     @Test
@@ -78,8 +122,7 @@ class SteganographyTest {
         long original = PerceptualHash.compute(image);
 
         long jpegHash = PerceptualHash.compute(roundTripJpeg(image));
-        assertTrue(PerceptualHash.distance(original, jpegHash) <= 8,
-                "JPEG re-encode should stay close in perceptual space");
+        assertTrue(PerceptualHash.distance(original, jpegHash) <= 8);
 
         BufferedImage noise = new BufferedImage(512, 384, BufferedImage.TYPE_INT_RGB);
         Random random = new Random(99);
@@ -88,8 +131,13 @@ class SteganographyTest {
                 noise.setRGB(x, y, random.nextInt(0xFFFFFF));
             }
         }
-        assertTrue(PerceptualHash.distance(original, PerceptualHash.compute(noise)) > 10,
-                "Unrelated content should be far in perceptual space");
+        assertTrue(PerceptualHash.distance(original, PerceptualHash.compute(noise)) > 10);
+    }
+
+    private void assertPayload(Steganography.Extracted extracted) {
+        assertNotNull(extracted, "Expected a recoverable payload");
+        assertArrayEquals(token(), extracted.token());
+        assertArrayEquals(MAC, extracted.mac());
     }
 
     private BufferedImage sampleImage(int width, int height, long seed) {
@@ -111,6 +159,18 @@ class SteganographyTest {
             image.setRGB(x, y, (v << 16) | (v << 8) | v);
         }
         return image;
+    }
+
+    private BufferedImage rotate90(BufferedImage source) {
+        int width = source.getWidth();
+        int height = source.getHeight();
+        BufferedImage out = new BufferedImage(height, width, BufferedImage.TYPE_INT_RGB);
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                out.setRGB(height - 1 - y, x, source.getRGB(x, y));
+            }
+        }
+        return out;
     }
 
     private BufferedImage roundTripJpeg(BufferedImage image) throws IOException {

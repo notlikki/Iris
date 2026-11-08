@@ -9,19 +9,19 @@ IRIS invisibly signs an image with a key, keeps the untouched original, and late
 
 ## How it works
 
-Every upload is validated by magic bytes, decoded, dimension-checked, and then signed with a random 128-bit token.
+Every upload is validated by magic bytes, decoded, dimension-checked, and then signed with a random 64-bit token plus a truncated HMAC-SHA-256. The HMAC binds the key to a server secret, so a token cannot be forged and a stripped or corrupted key is rejected before any database lookup.
 
-The token is embedded in three layers, tried in order on verification:
+The payload is embedded in three layers, tried in order on verification:
 
 | Layer | Technique | Survives | Fails on |
 |---|---|---|---|
-| **LSB** | Token + CRC written into the low bit of every RGB channel, repeated at 5 spread offsets | Lossless re-saves (PNG/BMP), local edits outside the payload windows | JPEG, resizing, filters |
-| **Robust** | Texture-weighted sine watermark: each 16×16 block carries one token bit as the luminance difference between its two halves; tiled across every block and recovered by majority vote | JPEG re-compression, brightness/contrast shifts, mild noise | Heavy crop, rotation, resize |
-| **pHash** | 64-bit perceptual hash of the stored original, compared by Hamming distance | Resize, crop, colour changes, re-encoding | Different images |
+| **LSB** | Token + MAC + CRC-32 written into the low bit of every RGB channel, repeated at 5 spread offsets | Lossless re-saves (PNG/BMP), local edits outside the payload windows | JPEG, resizing, filters |
+| **Robust** | Texture-weighted sine watermark: each 16×16 block carries one payload bit as the signed luminance difference between its two halves. A 2D index `(i + j*37) mod payloadBits` turns any translation into a cyclic rotation; extraction searches all 16×16 grid phases and rotations, repairs up to three weak bits, and validates the marker, CRC-32 and HMAC | JPEG re-compression, brightness/contrast shifts, mild noise, arbitrary crops | Heavy rotation, large resize |
+| **pHash** | 64-bit perceptual hash stored in four cardinal orientations, compared by minimum Hamming distance | Resize, 90/180/270° rotation, colour changes, re-encoding | Different images |
 
-If the watermark is unreadable, the perceptual hash is the last resort. On a match, the original stored bytes are returned exactly, alongside a tamper report: perceptual distance, mean pixel difference, changed-pixel percentage, dimension status, and a difference map.
+If the watermark is unreadable, the perceptual-hash variants are the last resort. On a match, the original stored bytes are returned exactly, alongside a tamper report: perceptual distance, mean pixel difference, changed-pixel percentage, dimension status, and a difference map.
 
-The layers are deliberately layered: exact identification when the file is intact, key recovery when it has been edited, and similarity matching when the key is destroyed. The original is never modified.
+The layers are deliberately layered: exact identification when the file is intact, key recovery when it has been edited or cropped, and orientation/scale matching when the key is destroyed. The original is never modified.
 
 ---
 
@@ -31,8 +31,9 @@ The layers are deliberately layered: exact identification when the file is intac
 backend/                       Spring Boot 3 / Java 21
 ├── src/main/java/com/iris/
 │   ├── stego/
-│   │   ├── Steganography      LSB + robust embedding/extraction
-│   │   ├── PerceptualHash     DCT-based 64-bit pHash
+│   │   ├── Steganography      LSB + robust embedding/extraction, CRC repair
+│   │   ├── WatermarkCrypto    HMAC-SHA-256 key binding
+│   │   ├── PerceptualHash     DCT pHash + orientation variants
 │   │   └── ImageCodec         PNG encode/decode
 │   ├── controller/            RecordController, VerificationController
 │   ├── dto/                   ImageRecordDto, VerificationResponseDto, AuditEventDto
@@ -80,10 +81,12 @@ frontend/                      React 19 + TypeScript + Vite
 | `iris.storage.max-width` | `4096` | — | Maximum image width |
 | `iris.storage.max-height` | `4096` | — | Maximum image height |
 | `iris.storage.max-pixels` | `16000000` | — | Maximum total pixels |
+| `iris.signing.secret` | `iris-local-dev-secret-change-me` | `IRIS_SIGNING_SECRET` | Secret used for the embedded HMAC (change it for any real use) |
+| `spring.datasource.url` | `jdbc:h2:file:./data/irisdb` | `IRIS_DB_PATH` | File-backed H2 database location |
 | `iris.frontend-dir` | `../frontend/dist` | `IRIS_FRONTEND_DIR` | Built frontend served by Spring Boot |
 | `spring.servlet.multipart.max-file-size` | `15MB` | — | Maximum upload size |
 
-The database is in-memory H2 (`irisdb`), so records and audit events reset when the backend restarts. Stored image files remain on disk.
+Records, verifications, and audit events persist in the file-backed H2 database at `backend/data/irisdb`, so they survive restarts. Stored image files remain on disk as well. Change `IRIS_SIGNING_SECRET` only before creating records: changing it invalidates existing embedded MACs (those records still fall back to perceptual matching).
 
 ---
 
@@ -121,7 +124,7 @@ cd backend
 mvn test
 ```
 
-The suite covers LSB round-trips, robust recovery after JPEG and tone changes, pHash stability, storage/path safety, and the register → verify → recover flow end to end.
+The suite covers LSB round-trips, robust recovery after JPEG, tone changes, and arbitrary crops, 90° rotation matching through hash variants, HMAC validation, storage/path safety, and the register → verify → recover flow end to end (23 tests).
 
 ---
 
@@ -134,9 +137,12 @@ The suite covers LSB round-trips, robust recovery after JPEG and tone changes, p
 - Security headers (`nosniff`, `DENY`, `Referrer-Policy`, `Cache-Control`) are injected on every response.
 - The audit log records operations without recording file contents or storage paths.
 
-## Honest limitations
+## Design limits
 
-- The robust layer is watermarking, not cryptography. It is designed for accidental edits and ordinary re-encoding, not a determined attacker. Anyone with the original and enough effort can attempt to strip it.
-- Crops, rotations, and large resizes can destroy both watermarks; those cases rely on the perceptual-hash fallback and are best-effort.
-- Recovery restores the stored original bytes. It does not regenerate pixels that were never stored.
-- The LSB layer only survives lossless formats. Re-uploading the signed PNG is exact; re-saving it as JPEG relies on the robust layer.
+These are inherent constraints, not missing features:
+
+- The robust watermark is designed for accidental edits, re-encoding, and crops. A determined attacker can degrade or erase it by aggressive resizing, rotation, or filtering; those cases rely on the perceptual-hash fallback and are best-effort.
+- Recovery restores the stored original bytes. It does not regenerate pixels that were never stored, so the database and storage are the source of truth.
+- The embedded authentication tag is a truncated HMAC (32 bits) over a 64-bit key. That is enough to bind a demonstration record against forgery, but it is not a full-strength cryptographic signature.
+- The LSB layer survives only lossless formats. Re-saving as JPEG drops it and relies on the robust layer.
+- Changing `IRIS_SIGNING_SECRET` after records exist stops their embedded MACs from validating; perceptual matching still identifies them.
