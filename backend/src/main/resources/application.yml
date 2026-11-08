@@ -1,0 +1,34 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: iris-backend
+  datasource:
+    url: jdbc:h2:mem:irisdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  h2:
+    console:
+      enabled: false
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    open-in-view: false
+  servlet:
+    multipart:
+      max-file-size: 15MB
+      max-request-size: 20MB
+  web:
+    resources:
+      static-locations: "file:${iris.frontend-dir}/,classpath:/static/"
+
+iris:
+  storage:
+    upload-dir: ${IRIS_STORAGE_DIR:data/storage}
+    max-width: 4096
+    max-height: 4096
+    max-pixels: 16000000
+  frontend-dir: ${IRIS_FRONTEND_DIR:../frontend/dist}

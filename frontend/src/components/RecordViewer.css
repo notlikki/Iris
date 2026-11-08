@@ -1,0 +1,15 @@
+.token-block {
+  display: grid;
+  gap: 3px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.token-value {
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--ink);
+  letter-spacing: 0.01em;
+}
