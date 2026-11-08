@@ -29,8 +29,10 @@ public class RecordController {
     }
 
     @PostMapping(value = "/records", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ResponseEntity<ImageRecordDto> register(@RequestParam("file") MultipartFile file) {
-        return ResponseEntity.ok(recordService.register(file));
+    public ResponseEntity<ImageRecordDto> register(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "protection", defaultValue = "invisible") String protection) {
+        return ResponseEntity.ok(recordService.register(file, "robust".equalsIgnoreCase(protection)));
     }
 
     @GetMapping("/records")

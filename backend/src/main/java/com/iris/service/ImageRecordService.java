@@ -63,6 +63,11 @@ public class ImageRecordService {
 
     @Transactional
     public ImageRecordDto register(MultipartFile file) {
+        return register(file, true);
+    }
+
+    @Transactional
+    public ImageRecordDto register(MultipartFile file, boolean robust) {
         if (file == null || file.isEmpty()) {
             auditService.recordEvent(AuditEventType.REGISTER_FAILURE, null, "Signing rejected", "Empty file provided");
             throw new ValidationException("EMPTY_FILE", "Select an image to sign.");
@@ -89,7 +94,9 @@ public class ImageRecordService {
         byte[] tokenBytes = new byte[SteganographyV3.TOKEN_BYTES];
         TOKEN_RANDOM.nextBytes(tokenBytes);
         String token = HexFormat.of().formatHex(tokenBytes);
-        SteganographyV3.EmbedResult embedded = SteganographyV3.embed(validation.bufferedImage(), tokenBytes);
+        SteganographyV3.EmbedResult embedded = robust
+                ? SteganographyV3.embed(validation.bufferedImage(), tokenBytes)
+                : SteganographyV3.embedInvisible(validation.bufferedImage(), tokenBytes);
         byte[] signedBytes = ImageCodec.toPng(embedded.image());
         List<Long> hashes = PerceptualHash.computeVariants(validation.bufferedImage());
 
@@ -189,7 +196,9 @@ public class ImageRecordService {
             throw new ValidationException("LEGACY_KEY_UPGRADE_REQUIRED",
                     "This legacy record uses an older key. Register its original again to create a stronger signed copy.");
         }
-        SteganographyV3.EmbedResult embedded = SteganographyV3.embed(original, tokenBytes);
+        SteganographyV3.EmbedResult embedded = record.isRobustEmbedded()
+                ? SteganographyV3.embed(original, tokenBytes)
+                : SteganographyV3.embedInvisible(original, tokenBytes);
 
         FileStorageService.StoredFileResult signedStored =
                 storageService.storeBytes(ImageCodec.toPng(embedded.image()), ".png");

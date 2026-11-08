@@ -88,6 +88,41 @@ class RecordIntegrationTest {
     }
 
     @Test
+    @DisplayName("Default invisible signing keeps signed pixels within one level of the original")
+    void invisibleSigningKeepsPixelsIdentical() throws Exception {
+        byte[] image = samplePng(512, 384, 47);
+        MockMultipartFile file = new MockMultipartFile("file", "invisible.png", "image/png", image);
+
+        String body = mockMvc.perform(multipart("/api/records").file(file))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.lsbEmbedded").value(true))
+                .andExpect(jsonPath("$.robustEmbedded").value(false))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        JsonNode record = objectMapper.readTree(body);
+
+        byte[] signedBytes = download(record.get("signedUrl").asText());
+        BufferedImage original = ImageIO.read(new ByteArrayInputStream(image));
+        BufferedImage signed = ImageIO.read(new ByteArrayInputStream(signedBytes));
+        int maxDiff = 0;
+        for (int y = 0; y < original.getHeight(); y++) {
+            for (int x = 0; x < original.getWidth(); x++) {
+                int a = original.getRGB(x, y);
+                int b = signed.getRGB(x, y);
+                for (int shift = 0; shift <= 16; shift += 8) {
+                    maxDiff = Math.max(maxDiff, Math.abs(((a >> shift) & 0xFF) - ((b >> shift) & 0xFF)));
+                }
+            }
+        }
+        assertTrue(maxDiff <= 1, "Signed pixels differed by " + maxDiff);
+
+        JsonNode verification = verify(signedBytes, "invisible.png");
+        assertTrue(verification.get("matched").asBoolean());
+        assertEquals("LSB", verification.get("method").asText());
+    }
+
+    @Test
     @DisplayName("A tone-shifted JPEG re-encode still recovers the record through the robust layer")
     void tamperedJpegMatchesThroughRobustLayer() throws Exception {
         byte[] image = samplePng(512, 384, 9);
@@ -285,7 +320,9 @@ class RecordIntegrationTest {
 
     private JsonNode register(byte[] image, String filename) throws Exception {
         MockMultipartFile file = new MockMultipartFile("file", filename, "image/png", image);
-        String body = mockMvc.perform(multipart("/api/records").file(file))
+        String body = mockMvc.perform(multipart("/api/records")
+                        .file(file)
+                        .param("protection", "robust"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.token").isString())
                 .andExpect(jsonPath("$.originalUrl").isString())

@@ -74,13 +74,14 @@ export const App: React.FC = () => {
     return payload?.message || `${fallback} (${response.status})`;
   };
 
-  const handleSign = async (file: File) => {
+  const handleSign = async (file: File, robust: boolean) => {
     setIsBusy(true);
     setErrorMessage(null);
     setSuccessMessage(null);
 
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('protection', robust ? 'robust' : 'invisible');
 
     try {
       const response = await fetch('/api/records', { method: 'POST', body: formData });
@@ -91,7 +92,9 @@ export const App: React.FC = () => {
       const record: ImageRecordDto = await response.json();
       setSelectedRecord(record);
       setShowVerification(false);
-      setSuccessMessage(`Image signed. Key ${record.token.slice(0, 8)}… embedded invisibly in the pixels.`);
+      setSuccessMessage(record.robustEmbedded
+        ? `Image signed with robust protection. Key ${record.token.slice(0, 8)}… embedded.`
+        : `Image signed invisibly. Key ${record.token.slice(0, 8)}… embedded.`);
       await fetchRecords();
       if (showAuditLogs) {
         fetchAuditLogs();

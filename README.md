@@ -12,7 +12,7 @@ and shows what changed.
 ![Spring Boot](https://img.shields.io/badge/Spring_Boot-3.3-6DB33F)
 ![React](https://img.shields.io/badge/React-19-61DAFB)
 ![Node](https://img.shields.io/badge/Node-20.19%2B-339933)
-![Tests](https://img.shields.io/badge/tests-52_passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-53_passing-brightgreen)
 
 [Quick start](#quick-start) · [How it works](#how-it-works) · [Benchmarks](#tests-and-benchmarks) · [API](#api) · [Design limits](#design-limits)
 
@@ -30,10 +30,10 @@ and shows what changed.
 
 | | |
 |---|---|
-| **Signing** | 96-bit key embedded invisibly, authenticated by the registry |
+| **Signing** | 96-bit key; **Invisible** (default, pixel-identical) or **Robust** protection |
 | **Recovery** | LSB → V3 watermark → V2 / legacy V1 → SHA-256 → pHash |
 | **Restoration** | Exact stored original plus a tamper report and difference map |
-| **Quality** | 52 tests, including a 30 dB PSNR floor and a real-photo attack matrix |
+| **Quality** | 53 tests, including a 30 dB PSNR floor and a real-photo attack matrix |
 
 ---
 
@@ -145,7 +145,7 @@ cd backend
 ./mvnw test
 ```
 
-Expected: **52 tests, 0 failures**.
+Expected: **53 tests, 0 failures**.
 
 ---
 
@@ -169,8 +169,12 @@ Open **http://localhost:5173**; Vite proxies `/api` to port 8080.
 
 ## Usage
 
-**Sign** — choose an image and press **Sign image**. The signed copy, key,
-checksums, and protection layers appear on the right.
+**Sign** — choose an image, pick a **Protection** level, and press **Sign image**.
+
+- **Invisible (default)** uses the LSB layer only. The signed file is visually identical to the original and verifies exactly when re-uploaded losslessly. Edited copies fall back to visual matching.
+- **Robust** adds the V3 convolutional watermark. It survives compression, crops, and resizing, at the cost of a faint texture in smooth areas.
+
+The signed copy, key, checksums, and protection layers appear on the right.
 
 **Verify and recover** — switch to **Verify**, upload a tampered copy, and press
 **Verify and recover**. Inspect the comparison slider and difference map, then
@@ -201,7 +205,7 @@ curl -F "file=@tampered.jpg" http://localhost:8080/api/verify
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/api/records` | Sign an image (`multipart/form-data`, field `file`) |
+| `POST` | `/api/records` | Sign an image (`file`; optional `protection=invisible` (default) or `robust`) |
 | `GET` | `/api/records` | List registered images, newest first |
 | `GET` | `/api/records/{id}` | Record metadata and key info |
 | `GET` | `/api/records/{id}/original` | Stream the untouched original |
@@ -301,7 +305,7 @@ Iris/
 │       │   ├── repository/     Spring Data JPA
 │       │   ├── dto/            API contracts
 │       │   └── config/         storage, CORS, security headers
-│       └── test/java/com/iris/ 52 tests + benchmark harness
+│       └── test/java/com/iris/ 53 tests + benchmark harness
 └── frontend/
     └── src/
         ├── App.tsx             sign/verify dashboard
@@ -344,7 +348,7 @@ Iris/
 - Exact originals are matched by SHA-256 checksum before any approximate fallback.
 - V2/V3 records can be upgraded with **Re-sign** while preserving their 96-bit
   key. V1 remains verifiable but must be registered again for a new key.
-- 52 tests enforce the recovery matrix, independent channels, reference
+- 53 tests enforce the recovery matrix, independent channels, reference
   alignment, legacy compatibility, and the 30 dB PSNR floor.
 
 ### Inherent limits
@@ -363,7 +367,10 @@ Iris/
   legacy CRC-syndrome repair guarantees recovery after arbitrary corruption.
 - LSB survives lossless formats only; lossy re-saves rely on the robust layer.
 - Recovery restores stored bytes; it does not regenerate pixels never stored.
-- The watermark is invisible in practice, though very smooth areas can show faint
+- **Invisible** signing is LSB-only and pixel-identical; lossy edits drop the key
+  and rely on visual matching. **Robust** signing survives edits at the cost of a
+  faint texture. The choice is per record.
+- Robust mode is invisible in practice, though very smooth areas can show faint
   texture under close inspection.
 
 ---

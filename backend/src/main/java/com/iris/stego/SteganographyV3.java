@@ -24,6 +24,15 @@ public final class SteganographyV3 {
     public record EmbedResult(BufferedImage image, boolean lsbEmbedded, int lsbCopies,
                               boolean robustEmbedded, int robustCopies) {}
 
+    /** LSB-only signing: pixel-identical to the original and lossless-verifiable. */
+    public static EmbedResult embedInvisible(BufferedImage source, byte[] token) {
+        if (token == null || token.length != TOKEN_BYTES) {
+            throw new IllegalArgumentException("Watermark token must be 12 bytes");
+        }
+        SteganographyV2.EmbedResult exact = SteganographyV2.embedExact(source, token);
+        return new EmbedResult(exact.image(), exact.lsbEmbedded(), exact.lsbCopies(), false, 0);
+    }
+
     public static EmbedResult embed(BufferedImage source, byte[] token) {
         if (token == null || token.length != TOKEN_BYTES) {
             throw new IllegalArgumentException("Watermark token must be 12 bytes");
@@ -119,21 +128,19 @@ public final class SteganographyV3 {
             for (int row = 0; row < rows; row++) {
                 for (int col = 0; col < cols; col++) {
                     int x = col * block, y = row * block;
-                    double left = 0, right = 0, sum = 0, squares = 0;
+                    double left = 0, right = 0;
                     for (int dy = 0; dy < block; dy++) {
                         for (int dx = 0; dx < block; dx++) {
                             double luma = luma(image.getRGB(x + dx, y + dy));
                             if (dx < block / 2) left += luma; else right += luma;
-                            sum += luma; squares += luma * luma;
                         }
                     }
                     double difference = (left - right) / (block * block / 2.0);
                     // Strong natural edges are erasures, not targets for large visible changes.
                     if (Math.abs(difference) > edgeLimit) continue;
                     boolean one = coded[(col + STRIDE * row) % coded.length];
-                    double mean = sum / (block * block);
-                    double texture = Math.sqrt(Math.max(0, squares / (block * block) - mean * mean));
-                    double adapted = 1.5 + (strength - 1.5) * Math.min(1, texture / 24);
+                    double texture = texture(image, x, y, block);
+                    double adapted = 2 + (strength - 2) * Math.min(1, texture / 16);
                     double target = one ? adapted : -adapted;
                     if ((one && difference >= target) || (!one && difference <= target)) continue;
                     double amplitude = Math.max(-maxStep, Math.min(maxStep, (target - difference) * Math.PI / 4));
@@ -188,6 +195,30 @@ public final class SteganographyV3 {
                 if (result != null) return result;
             }
             return null;
+        }
+
+        private static double texture(BufferedImage image, int x, int y, int block) {
+            int cell = 2;
+            int samples = block / cell;
+            double[] values = new double[samples * samples];
+            int index = 0;
+            for (int cy = 0; cy < samples; cy++) {
+                for (int cx = 0; cx < samples; cx++) {
+                    double sum = 0;
+                    for (int dy = 0; dy < cell; dy++) {
+                        for (int dx = 0; dx < cell; dx++) {
+                            sum += luma(image.getRGB(x + cx * cell + dx, y + cy * cell + dy));
+                        }
+                    }
+                    values[index++] = sum / (cell * cell);
+                }
+            }
+            double mean = 0;
+            for (double value : values) mean += value;
+            mean /= values.length;
+            double variance = 0;
+            for (double value : values) variance += (value - mean) * (value - mean);
+            return Math.sqrt(variance / values.length);
         }
 
         private double[] votes(BufferedImage image, Integral integral, int x, int y, boolean limited) {

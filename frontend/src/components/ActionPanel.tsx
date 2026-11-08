@@ -7,7 +7,7 @@ type Mode = 'sign' | 'verify';
 interface Props {
   mode: Mode;
   onModeChange: (mode: Mode) => void;
-  onSign: (file: File) => void;
+  onSign: (file: File, robust: boolean) => void;
   onVerify: (file: File) => void;
   isBusy: boolean;
 }
@@ -23,6 +23,7 @@ export const ActionPanel: React.FC<Props> = ({ mode, onModeChange, onSign, onVer
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [protection, setProtection] = useState<'invisible' | 'robust'>('invisible');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isSign = mode === 'sign';
@@ -82,7 +83,7 @@ export const ActionPanel: React.FC<Props> = ({ mode, onModeChange, onSign, onVer
       return;
     }
     if (isSign) {
-      onSign(selectedFile);
+      onSign(selectedFile, protection === 'robust');
     } else {
       onVerify(selectedFile);
     }
@@ -165,6 +166,37 @@ export const ActionPanel: React.FC<Props> = ({ mode, onModeChange, onSign, onVer
             <AlertCircleIcon size={15} />
             <span>{errorMsg}</span>
           </p>
+        )}
+
+        {isSign && (
+          <div className="protection">
+            <span className="field-label">Protection</span>
+            <div className="view-switch" role="group" aria-label="Protection level">
+              <button
+                type="button"
+                className={protection === 'invisible' ? 'is-active' : ''}
+                onClick={() => setProtection('invisible')}
+                aria-pressed={protection === 'invisible'}
+                disabled={isBusy}
+              >
+                Invisible
+              </button>
+              <button
+                type="button"
+                className={protection === 'robust' ? 'is-active' : ''}
+                onClick={() => setProtection('robust')}
+                aria-pressed={protection === 'robust'}
+                disabled={isBusy}
+              >
+                Robust
+              </button>
+            </div>
+            <p className="field-hint">
+              {protection === 'invisible'
+                ? 'The signed file looks identical to the original. Lossless copies verify exactly; edited copies fall back to visual matching.'
+                : 'Survives compression, crops, and resizing, but adds a faint texture to smooth areas.'}
+            </p>
+          </div>
         )}
 
         <button type="submit" className="btn btn-primary btn-block submit" disabled={isBusy}>

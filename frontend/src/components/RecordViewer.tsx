@@ -29,8 +29,8 @@ const formatDate = (isoString: string) => {
 export const RecordViewer: React.FC<Props> = ({ record, onResign, isResigning }) => {
   const [preview, setPreview] = useState<'signed' | 'original'>('signed');
   const protection = record.robustEmbedded
-    ? `LSB ×${record.lsbCopies} · spread ×${record.robustCopies}`
-    : `LSB ×${record.lsbCopies}`;
+    ? `LSB ×${record.lsbCopies} · robust ×${record.robustCopies}`
+    : `LSB ×${record.lsbCopies} · invisible`;
 
   return (
     <section className="panel viewer" aria-labelledby="record-title">
