@@ -20,6 +20,7 @@ export const VerificationViewer: React.FC<Props> = ({ verification }) => {
   const [view, setView] = useState<'compare' | 'difference'>('compare');
   const record = verification.record ?? null;
   const matched = verification.matched && record !== null;
+  const isVisualMatch = verification.method === 'PHASH';
   const methodLabel = METHOD_LABEL[verification.method] ?? verification.method;
   const similarityPct = verification.similarity != null
     ? (verification.similarity * 100).toFixed(1)
@@ -59,16 +60,16 @@ export const VerificationViewer: React.FC<Props> = ({ verification }) => {
         <div className="viewer-title">
           <h2 className="viewer-name" id="verify-title">{record.originalFilename}</h2>
           <p className="viewer-sub">
-            <span className="status is-ok">
-              <ShieldCheckIcon size={13} />
-              Original recovered
+            <span className={`status ${isVisualMatch ? 'is-warn' : 'is-ok'}`}>
+              {isVisualMatch ? <AlertTriangleIcon size={13} /> : <ShieldCheckIcon size={13} />}
+              {isVisualMatch ? 'Possible visual match' : verification.method === 'CHECKSUM' ? 'Exact file identified' : 'Hidden key recovered'}
             </span>
             <span className="sep" aria-hidden="true">·</span>
             <span>{methodLabel}</span>
             {similarityPct && (
               <>
                 <span className="sep" aria-hidden="true">·</span>
-                <span>{similarityPct}% perceptual match</span>
+                <span>{similarityPct}% hash similarity</span>
               </>
             )}
           </p>
@@ -98,7 +99,7 @@ export const VerificationViewer: React.FC<Props> = ({ verification }) => {
 
           <a className="btn btn-primary" href={verification.restoreUrl ?? record.downloadUrl} download>
             <DownloadIcon size={15} />
-            <span>Restore original</span>
+            <span>{isVisualMatch ? 'Download possible original' : 'Restore original'}</span>
           </a>
         </div>
       </div>
@@ -156,7 +157,7 @@ export const VerificationViewer: React.FC<Props> = ({ verification }) => {
         )}
 
         <div className="token-block">
-          <span className="checksum-label">Recovered key</span>
+          <span className="checksum-label">{isVisualMatch || verification.method === 'CHECKSUM' ? 'Stored record key' : 'Recovered key'}</span>
           <code className="token-value">{verification.token ?? record.token}</code>
         </div>
 

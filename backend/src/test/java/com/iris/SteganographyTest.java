@@ -184,7 +184,7 @@ class SteganographyTest {
         assertNull(recover(sampleImage(320, 240, 77), 640, 480));
         BufferedImage signed = Steganography.embed(sampleImage(640, 480, 41), token(), MAC).image();
         assertNull(WatermarkRecovery.recover(resizeImage(signed, 0.5),
-                List.of(new WatermarkRecovery.Size(640, 480)), ignored -> false));
+                List.of(new WatermarkRecovery.Size(640, 480)), Steganography::extractRobust, ignored -> false));
     }
 
     @Test
@@ -209,6 +209,7 @@ class SteganographyTest {
 
     private Steganography.Extracted recover(BufferedImage image, int width, int height) {
         return WatermarkRecovery.recover(image, List.of(new WatermarkRecovery.Size(width, height)),
+                Steganography::extractRobust,
                 extracted -> java.util.Arrays.equals(token(), extracted.token())
                         && java.util.Arrays.equals(MAC, extracted.mac()));
     }

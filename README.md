@@ -4,9 +4,9 @@
 ![Spring Boot](https://img.shields.io/badge/Spring_Boot-3.3-6DB33F)
 ![React](https://img.shields.io/badge/React-19-61DAFB)
 ![Node](https://img.shields.io/badge/Node-20.19%2B-339933)
-![Tests](https://img.shields.io/badge/tests-36_passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-52_passing-brightgreen)
 
-IRIS embeds an invisible, HMAC-bound key across an image and keeps the untouched original. Re-upload a tampered, cropped, or re-compressed copy and IRIS reads the key, finds the record, restores the exact original, and reports what changed.
+IRIS embeds an invisible, registry-authenticated key across an image and keeps the untouched original. Re-upload a tampered, cropped, or re-compressed copy and IRIS reads the key, finds the record, restores the exact original, and reports what changed.
 
 > **Repository access.** This repository is private. To let anyone clone it, make it public under **Settings → General → Danger Zone → Change visibility**, or invite collaborators. The commands below assume you already have access.
 
@@ -41,11 +41,11 @@ The original image is never modified.
 
 | Layer | Technique | Survives | Fails on |
 |---|---|---|---|
-| **LSB** | Token + MAC + CRC-32 in the low bit of every RGB channel, repeated at 5 spread offsets | Lossless re-saves (PNG/BMP), local edits outside the payload windows | JPEG, resizing, filters |
-| **Robust** | Stronger texture-weighted sine watermark in each 16×16 block; clipped soft votes, multiple sync candidates, bounded CRC-syndrome error repair, crop-phase search, and bounded resize normalization. Validates marker, CRC-32 and HMAC | Tested JPEG conversion/compression, tone changes, crops, resizing, and combined edits described below | Severe information loss, unsearched transforms, heavy rotation, filtering |
+| **LSB** | Key + CRC-32 in the low bit of every RGB channel, repeated at 5 spread offsets | Lossless re-saves (PNG/BMP), local edits outside the payload windows | JPEG, resizing, filters |
+| **Robust V3** | Rate-1/2 convolutional encoding with soft Viterbi decoding, whitened bits, and independent repetitions on 8×8 and 16×16 grids. Texture adaptation and edge erasures limit distortion. Crop/scale search and reference-guided orientation correction precede key lookup | Tested real photos, compression, resizing, cropping, blur, painting, cardinal rotations and small rotations; see measured failures below | Severe information loss, some combined crop/resize/JPEG cases, perspective changes, and transformations outside the bounded search |
 | **pHash** | 64-bit perceptual hash stored in four cardinal orientations, compared by minimum Hamming distance | Resize, 90/180/270° rotation, colour changes, re-encoding | Different images |
 
-The key is 64 bits and the embedded authentication tag is a truncated HMAC-SHA-256. Only records whose key validates against the server secret are accepted.
+New V3 copies carry a 96-bit key generated with `SecureRandom`, plus a CRC-32 inside the error-corrected payload. A recovered key must exist in the registry. V2 copies and legacy V1 copies (64-bit key + 32-bit HMAC) remain readable. Registry lookup identifies a record; it is not a public-key ownership signature.
 
 ---
 
@@ -145,7 +145,7 @@ cd backend
 Expected result:
 
 ```text
-Tests run: 36, Failures: 0, Errors: 0, Skipped: 0
+Tests run: 40, Failures: 0, Errors: 0, Skipped: 0
 ```
 
 Frontend checks:
@@ -191,7 +191,7 @@ Open **http://localhost:5173**. Vite proxies `/api` to port 8080.
 
 **Upgrade an older signed copy**
 
-Select a registered image and press **Re-sign**. IRIS re-embeds the stored original with the current watermark strength and replaces the signed file; the key and record stay the same. Do this for downloads signed before the current embedding was introduced.
+Select a V2/V3 registered image and press **Re-sign** to regenerate its signed copy with V3. The 96-bit key and record stay the same. Previously downloaded files do not change. For a legacy V1 record, register its stored original again to obtain a new 96-bit key; re-sign returns an explicit upgrade message instead of silently breaking old-key verification.
 
 **Verify and recover**
 
@@ -248,7 +248,7 @@ curl -F "file=@tampered.jpg" http://localhost:8080/api/verify
 | `iris.storage.max-width` | `4096` | — | Maximum image width |
 | `iris.storage.max-height` | `4096` | — | Maximum image height |
 | `iris.storage.max-pixels` | `16000000` | — | Maximum total pixels |
-| `iris.signing.secret` | `iris-local-dev-secret-change-me` | `IRIS_SIGNING_SECRET` | Secret used for the embedded HMAC |
+| `iris.signing.secret` | `iris-local-dev-secret-change-me` | `IRIS_SIGNING_SECRET` | Secret used to validate legacy v1 HMACs |
 | `spring.datasource.url` | `jdbc:h2:file:./data/irisdb` | `IRIS_DB_PATH` | File-backed H2 database |
 | `iris.frontend-dir` | `../frontend/dist` | `IRIS_FRONTEND_DIR` | Built frontend served by Spring Boot |
 | `spring.servlet.multipart.max-file-size` | `15MB` | — | Maximum upload size |
@@ -285,7 +285,7 @@ iris/
 │       │   ├── dto/             API transfer objects
 │       │   └── config/          Storage, CORS, security headers
 │       ├── main/resources/      application.yml
-│       └── test/java/com/iris/  36 tests
+│       └── test/java/com/iris/  40 tests
 └── frontend/
     ├── package.json
     ├── vite.config.ts           dev proxy for /api
@@ -316,18 +316,21 @@ iris/
 
 ## Design limits
 
-These are inherent constraints, not missing features:
+### What the system guarantees
 
-- No invisible watermark can be guaranteed to survive arbitrary editing. Removing most pixels, extreme downsampling, heavy blur, or repainting can destroy its information. Visual matching remains a separate, approximate fallback.
-- Geometry recovery is a finite search: registered dimensions scaled by crop fractions (1, 7/8, 3/4, 5/8, 1/2, 3/8, 1/4), followed by common inverse scales of the candidate. It is capped at 48 attempts and 160 million normalized pixels (16 million per attempt, 4096 px per side), with records ordered by perceptual closeness. A transform outside those fractions, or a very large registry, can still miss.
-- Older signed copies can be upgraded in place with **Re-sign**, which re-embeds the stored original at the current strength without changing the record or key.
-- Automated synthetic-image tests recover the actual token and MAC after 50% and 70% resizing, 150% enlargement, PNG/BMP/JPEG conversion, a crop followed by 50% resizing and JPEG conversion, a 5/8 crop followed by 50% resizing, and an opaque local edit followed by JPEG quality 0.35 compression. These are reproducible test cases, not universal survival guarantees. Quality is checked with a minimum 30 dB PSNR on a representative synthetic image; visual acceptability still depends on content.
-- Error repair now combines CRC-syndrome subsets: up to four corrupted payload bits among the 64 weakest, or up to six among the 28 weakest, plus known-marker restoration. These are conditional search limits, not guaranteed correction for arbitrary errors. This decoder improvement also applies to existing signed copies without changing their embedded format.
-- Additional stress tests run six attacks across three synthetic fixtures: JPEG quality 0.10 and 0.05, quarter-size resizing, a 3×3 box blur, a crop retaining 40% of the area, and crop → half-size resize → JPEG quality 0.10. Unsigned versions of the same attacks must not acquire an authenticated payload. The previously failing combined attack is now covered by regression assertions.
-- The resized search accepts a result only when its HMAC is valid and its token exists in the registry. It does not promote a perceptual match to an authenticated watermark match.
-- Recovery restores the stored original bytes. It does not regenerate pixels that were never stored, so the database and storage are the source of truth.
-- The embedded authentication tag is a truncated HMAC (32 bits) over a 64-bit key. It binds a demonstration record against forgery but is not a full-strength cryptographic signature.
+- A recovered watermark is accepted only when its key exists in the registry; legacy v1 copies also validate their HMAC. A perceptual match is never promoted to an authenticated match.
+- Exact originals are matched by SHA-256 checksum before any approximate fallback.
+- Existing V2/V3 records can be upgraded with **Re-sign** while preserving their 96-bit key. V1 remains verifiable; upgrading it requires a new registration.
+- The suite runs 52 tests covering error correction, independent watermark channels, real-photo edits, reference alignment, legacy compatibility, storage and API behavior. The offline benchmark compares V3 with a frozen pre-upgrade baseline across six real images and two generated fixtures. Measured recovery, quality, latency, false acceptances and remaining regressions are recorded in [the benchmark report](backend/docs/watermark-benchmark.md).
+
+### Inherent limits
+
+- No invisible watermark can be guaranteed to survive arbitrary editing. Removing most pixels, extreme downsampling, heavy blur, or repainting can destroy its information; visual matching is a separate, approximate fallback.
+- Reference-guided alignment estimates cardinal orientation, mirroring and a small rotation (a coarse ±12° scan with bounded refinement) using at most two nearby stored originals. Correlation only guides correction: key decoding and registry lookup must still succeed. Perspective and arbitrary crop registration are not implemented.
+- Geometry recovery is a finite search: registered dimensions scaled by crop fractions (1, 7/8, 3/4, 5/8, 1/2, 3/8, 1/4), then common inverse scales of the candidate. It is capped at 48 attempts and 160 million normalized pixels (16 million per attempt, 4096 px per side), with records ordered by perceptual closeness. Transforms outside those fractions, or a very large registry, can still miss.
+- V3 uses a terminated constraint-length-7 convolutional code with generators (171, 133) in octal, soft Viterbi decoding and CRC-32 validation. CRC-syndrome repair is retained for older formats. Neither mechanism guarantees recovery after arbitrary corruption.
 - The LSB layer survives only lossless formats. Re-saving as JPEG drops it and relies on the robust layer.
+- Recovery restores the stored original bytes. It does not regenerate pixels that were never stored, so the database and storage are the source of truth.
 - The watermark is designed to be invisible; very smooth areas can show faint texture under close inspection.
 
 ## Security notes
@@ -338,3 +341,17 @@ These are inherent constraints, not missing features:
 - API errors are sanitized; stack traces, SQL, and storage paths are never returned.
 - Security headers (`nosniff`, `DENY`, `Referrer-Policy`, `Cache-Control`) are injected on every response.
 - The audit log records operations without recording file contents or storage paths.
+
+
+## Reproduce the robustness benchmark
+
+Fixtures are bundled under `backend/src/test/resources/watermark` with attribution and checksums; tests do not download data.
+
+```bash
+cd backend
+./mvnw test
+java -Djava.awt.headless=true -cp target/classes:target/test-classes \
+  com.iris.WatermarkBenchmark target/watermark-benchmark.csv
+```
+
+The benchmark runs ten conditions per fixture, including an unchanged control, and two negative checks. It reports actual key recovery rather than perceptual matching. V2 uses the frozen pre-upgrade geometry search; V3 includes the new alignment and error-corrected channels. Timing is local, single-run timing rather than a production load test. The screenshot fixture uses the platform's logical monospace font, so its exact pixels can vary across systems.

@@ -13,6 +13,9 @@ import com.iris.repository.VerificationRepository;
 import com.iris.stego.ImageCodec;
 import com.iris.stego.PerceptualHash;
 import com.iris.stego.Steganography;
+import com.iris.stego.SteganographyV2;
+import com.iris.stego.SteganographyV3;
+import com.iris.stego.ImageAlignment;
 import com.iris.stego.WatermarkCrypto;
 import com.iris.stego.WatermarkRecovery;
 import org.springframework.core.io.Resource;
@@ -97,23 +100,40 @@ public class VerificationService {
         ImageRecord record = null;
         String method = null;
 
-        Steganography.Extracted lsb = Steganography.extractLsb(candidate);
-        if (lsb != null && watermarkCrypto.verify(lsb.token(), lsb.mac())) {
-            token = HexFormat.of().formatHex(lsb.token());
-            record = recordRepository.findByToken(token).orElse(null);
+        // v2/v3 exact layer: 96-bit key looked up in the registry.
+        record = matchV2(SteganographyV2.extractLsb(candidate));
+        if (record != null) {
+            token = record.getToken();
+            method = "LSB";
+        }
+        if (record == null) {
+            record = matchV3(SteganographyV3.extractRobust(candidate));
             if (record != null) {
-                method = "LSB";
+                token = record.getToken();
+                method = "SPREAD";
+            }
+        }
+        if (record == null) {
+            record = matchV2(SteganographyV2.extractRobust(candidate));
+            if (record != null) {
+                token = record.getToken();
+                method = "SPREAD";
             }
         }
 
+        // Legacy v1: 64-bit key plus a truncated HMAC.
         if (record == null) {
-            Steganography.Extracted robust = Steganography.extractRobust(candidate);
-            if (robust != null && watermarkCrypto.verify(robust.token(), robust.mac())) {
-                token = HexFormat.of().formatHex(robust.token());
-                record = recordRepository.findByToken(token).orElse(null);
-                if (record != null) {
-                    method = "SPREAD";
-                }
+            record = matchLegacy(Steganography.extractLsb(candidate));
+            if (record != null) {
+                token = record.getToken();
+                method = "LSB";
+            }
+        }
+        if (record == null) {
+            record = matchLegacy(Steganography.extractRobust(candidate));
+            if (record != null) {
+                token = record.getToken();
+                method = "SPREAD";
             }
         }
 
@@ -134,13 +154,50 @@ public class VerificationService {
                     .map(saved -> new WatermarkRecovery.Size(saved.getWidth(), saved.getHeight()))
                     .distinct()
                     .toList();
-            Steganography.Extracted recovered = WatermarkRecovery.recover(candidate, sizes,
-                    extracted -> watermarkCrypto.verify(extracted.token(), extracted.mac())
-                            && recordRepository.findByToken(HexFormat.of().formatHex(extracted.token())).isPresent());
-            if (recovered != null) {
-                token = HexFormat.of().formatHex(recovered.token());
-                record = recordRepository.findByToken(token).orElse(null);
-                method = "SPREAD";
+
+            // Estimate geometry from at most two visually nearby references. Correlation
+            // only guides alignment; an embedded key matching that record is mandatory.
+            List<ImageRecord> nearby = recordRepository.findAllByOrderByCreatedAtDesc().stream()
+                    .sorted(Comparator.comparingInt(saved -> minDistance(candidateHash, saved)))
+                    .limit(2).toList();
+            for (ImageRecord saved : nearby) {
+                ImageAlignment.Estimate alignment = ImageAlignment.align(candidate, imageRecordService.loadOriginalImage(saved));
+                if (alignment == null || alignment.correlation() < .65) continue;
+                ImageRecord alignedRecord = matchV3(SteganographyV3.extractRobust(alignment.image()));
+                if (alignedRecord == null) alignedRecord = matchV2(SteganographyV2.extractRobust(alignment.image()));
+                if (alignedRecord == null) alignedRecord = matchLegacy(Steganography.extractRobust(alignment.image()));
+                if (alignedRecord != null && alignedRecord.getId().equals(saved.getId())) {
+                    record = alignedRecord;
+                    token = record.getToken();
+                    method = "SPREAD";
+                    break;
+                }
+            }
+            if (record == null) {
+                SteganographyV3.Extracted recoveredV3 = WatermarkRecovery.recover(candidate, sizes,
+                        SteganographyV3::extractRobust, extracted -> matchV3(extracted) != null);
+                if (recoveredV3 != null) {
+                    record = matchV3(recoveredV3);
+                    token = record.getToken();
+                    method = "SPREAD";
+                }
+            }
+            if (record == null) {
+                SteganographyV2.Extracted recoveredV2 = WatermarkRecovery.recover(candidate, sizes,
+                        SteganographyV2::extractRobust, extracted -> matchV2(extracted) != null);
+                if (recoveredV2 != null) {
+                    record = matchV2(recoveredV2);
+                    token = record.getToken();
+                    method = "SPREAD";
+                } else {
+                    Steganography.Extracted recoveredV1 = WatermarkRecovery.recover(candidate, sizes,
+                            Steganography::extractRobust, extracted -> matchLegacy(extracted) != null);
+                    if (recoveredV1 != null) {
+                        record = matchLegacy(recoveredV1);
+                        token = record.getToken();
+                        method = "SPREAD";
+                    }
+                }
             }
         }
 
@@ -249,6 +306,25 @@ public class VerificationService {
     private Verification requireVerification(Long id) {
         return verificationRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Verification with ID " + id + " was not found."));
+    }
+
+    private ImageRecord matchV3(SteganographyV3.Extracted extracted) {
+        if (extracted == null) return null;
+        return recordRepository.findByToken(HexFormat.of().formatHex(extracted.token())).orElse(null);
+    }
+
+    private ImageRecord matchV2(SteganographyV2.Extracted extracted) {
+        if (extracted == null) {
+            return null;
+        }
+        return recordRepository.findByToken(HexFormat.of().formatHex(extracted.token())).orElse(null);
+    }
+
+    private ImageRecord matchLegacy(Steganography.Extracted extracted) {
+        if (extracted == null || !watermarkCrypto.verify(extracted.token(), extracted.mac())) {
+            return null;
+        }
+        return recordRepository.findByToken(HexFormat.of().formatHex(extracted.token())).orElse(null);
     }
 
     private int minDistance(long hash, ImageRecord record) {

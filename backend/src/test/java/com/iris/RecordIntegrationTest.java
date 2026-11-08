@@ -50,6 +50,9 @@ class RecordIntegrationTest {
     @Autowired
     private AuditEventRepository auditEventRepository;
 
+    @Autowired
+    private com.iris.stego.WatermarkCrypto watermarkCrypto;
+
     @BeforeEach
     void cleanDatabase() {
         verificationRepository.deleteAll();
@@ -134,8 +137,8 @@ class RecordIntegrationTest {
     }
 
     @Test
-    @DisplayName("A rotated image matches through a perceptual hash variant")
-    void rotatedImageMatchesThroughPerceptualHash() throws Exception {
+    @DisplayName("A rotated image recovers its embedded key after alignment")
+    void rotatedImageRecoversKeyAfterAlignment() throws Exception {
         JsonNode record = register(samplePng(512, 384, 33), "rotate-source.png");
         long id = record.get("id").asLong();
 
@@ -146,7 +149,7 @@ class RecordIntegrationTest {
 
         assertTrue(verification.get("matched").asBoolean(), "Rotated image should still match");
         assertEquals(id, verification.get("record").get("id").asLong());
-        assertEquals("PHASH", verification.get("method").asText());
+        assertEquals("SPREAD", verification.get("method").asText());
     }
 
     @Test
@@ -237,6 +240,40 @@ class RecordIntegrationTest {
         assertTrue(verification.get("matched").asBoolean());
         assertEquals(id, verification.get("record").get("id").asLong());
         assertEquals("LSB", verification.get("method").asText());
+    }
+
+    @Test
+    @DisplayName("Legacy v1 images remain verifiable without rewriting their key")
+    void legacyV1StillVerifiesAndUpgradeIsExplicit() throws Exception {
+        byte[] original = samplePng(512, 384, 67);
+        JsonNode registered = register(original, "legacy.png");
+        var entity = recordRepository.findById(registered.get("id").asLong()).orElseThrow();
+        byte[] token = java.util.HexFormat.of().parseHex("0123456789abcdef");
+        entity.setToken(java.util.HexFormat.of().formatHex(token));
+        recordRepository.save(entity);
+        BufferedImage signed = com.iris.stego.Steganography.embed(
+                ImageIO.read(new ByteArrayInputStream(original)), token, watermarkCrypto.mac(token)).image();
+        JsonNode result = verify(WatermarkStressTest.jpegBytes(signed, .75f), "legacy.jpg");
+        assertTrue(result.get("matched").asBoolean());
+        assertEquals("SPREAD", result.get("method").asText());
+        assertEquals(entity.getId().longValue(), result.get("record").get("id").asLong());
+        mockMvc.perform(post("/api/records/" + entity.getId() + "/resign"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("LEGACY_KEY_UPGRADE_REQUIRED"));
+    }
+
+    @Test
+    @DisplayName("Existing v2 signed copies remain readable")
+    void v2CopiesRemainReadable() throws Exception {
+        byte[] original = samplePng(512, 384, 71);
+        JsonNode registered = register(original, "v2.png");
+        byte[] token = java.util.HexFormat.of().parseHex(registered.get("token").asText());
+        BufferedImage signed = com.iris.stego.SteganographyV2.embed(
+                ImageIO.read(new ByteArrayInputStream(original)), token).image();
+        JsonNode result = verify(WatermarkStressTest.jpegBytes(signed, .75f), "v2.jpg");
+        assertTrue(result.get("matched").asBoolean());
+        assertEquals("SPREAD", result.get("method").asText());
+        assertEquals(registered.get("id").asLong(), result.get("record").get("id").asLong());
     }
 
     private JsonNode register(byte[] image, String filename) throws Exception {

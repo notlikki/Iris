@@ -6,6 +6,7 @@ import java.awt.image.BufferedImage;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.function.Predicate;
 
 /**
@@ -35,8 +36,20 @@ public final class WatermarkRecovery {
     public record Size(int width, int height) {
     }
 
-    public static Steganography.Extracted recover(BufferedImage candidate, List<Size> originalSizes,
-                                                   Predicate<Steganography.Extracted> authentic) {
+    public static <T> T recover(BufferedImage candidate, List<Size> originalSizes,
+                                Function<BufferedImage, T> extract, Predicate<T> authentic) {
+        // Realign cardinal rotations before scale search. A rotated watermark is
+        // not a perceptual match: its recovered payload must pass authentic.
+        BufferedImage oriented = candidate;
+        for (int turn = 1; turn <= 3; turn++) {
+            oriented = rotate90(oriented);
+            T decoded = extract.apply(oriented);
+            if (decoded != null && authentic.test(decoded)) return decoded;
+        }
+        BufferedImage mirrored = reflect(candidate);
+        T reflected = extract.apply(mirrored);
+        if (reflected != null && authentic.test(reflected)) return reflected;
+
         Set<Size> targets = new LinkedHashSet<>();
 
         // A crop taken before or after a resize is restored by resizing to a
@@ -59,7 +72,7 @@ public final class WatermarkRecovery {
         for (Size size : targets) {
             long pixels = (long) size.width() * size.height();
             if (size.width() < 16 || size.height() < 16 || size.width() > 4096 || size.height() > 4096
-                    || pixels > MAX_PIXELS || pixels < 152L * 256
+                    || pixels > MAX_PIXELS || pixels < SteganographyV3.MIN_ROBUST_PIXELS
                     || (size.width() == candidate.getWidth() && size.height() == candidate.getHeight())) {
                 continue;
             }
@@ -69,12 +82,26 @@ public final class WatermarkRecovery {
             attempts++;
             pixelsUsed += pixels;
             BufferedImage restored = resize(candidate, size.width(), size.height());
-            Steganography.Extracted extracted = Steganography.extractRobust(restored);
+            T extracted = extract.apply(restored);
             if (extracted != null && authentic.test(extracted)) {
                 return extracted;
             }
         }
         return null;
+    }
+
+    private static BufferedImage rotate90(BufferedImage source) {
+        BufferedImage image = new BufferedImage(source.getHeight(), source.getWidth(), BufferedImage.TYPE_INT_RGB);
+        for (int y = 0; y < source.getHeight(); y++) for (int x = 0; x < source.getWidth(); x++)
+            image.setRGB(source.getHeight() - 1 - y, x, source.getRGB(x, y));
+        return image;
+    }
+
+    private static BufferedImage reflect(BufferedImage source) {
+        BufferedImage image = new BufferedImage(source.getWidth(), source.getHeight(), BufferedImage.TYPE_INT_RGB);
+        for (int y = 0; y < source.getHeight(); y++) for (int x = 0; x < source.getWidth(); x++)
+            image.setRGB(source.getWidth() - 1 - x, y, source.getRGB(x, y));
+        return image;
     }
 
     private static BufferedImage resize(BufferedImage source, int width, int height) {

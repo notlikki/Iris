@@ -11,8 +11,8 @@ import com.iris.repository.ImageRecordRepository;
 import com.iris.repository.VerificationRepository;
 import com.iris.stego.ImageCodec;
 import com.iris.stego.PerceptualHash;
-import com.iris.stego.Steganography;
-import com.iris.stego.WatermarkCrypto;
+import com.iris.stego.SteganographyV3;
+import java.security.SecureRandom;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -24,16 +24,16 @@ import java.io.IOException;
 import java.nio.file.Paths;
 import java.util.HexFormat;
 import java.util.List;
-import java.util.UUID;
 
 @Service
 public class ImageRecordService {
+
+    private static final SecureRandom TOKEN_RANDOM = new SecureRandom();
 
     private final ImageRecordRepository recordRepository;
     private final VerificationRepository verificationRepository;
     private final FileStorageService storageService;
     private final ImageValidator imageValidator;
-    private final WatermarkCrypto watermarkCrypto;
     private final AuditService auditService;
 
     public ImageRecordService(
@@ -41,14 +41,12 @@ public class ImageRecordService {
             VerificationRepository verificationRepository,
             FileStorageService storageService,
             ImageValidator imageValidator,
-            WatermarkCrypto watermarkCrypto,
             AuditService auditService
     ) {
         this.recordRepository = recordRepository;
         this.verificationRepository = verificationRepository;
         this.storageService = storageService;
         this.imageValidator = imageValidator;
-        this.watermarkCrypto = watermarkCrypto;
         this.auditService = auditService;
     }
 
@@ -88,10 +86,10 @@ public class ImageRecordService {
             throw ex;
         }
 
-        String token = UUID.randomUUID().toString().replace("-", "").substring(0, Steganography.TOKEN_BYTES * 2);
-        byte[] tokenBytes = HexFormat.of().parseHex(token);
-        byte[] mac = watermarkCrypto.mac(tokenBytes);
-        Steganography.EmbedResult embedded = Steganography.embed(validation.bufferedImage(), tokenBytes, mac);
+        byte[] tokenBytes = new byte[SteganographyV3.TOKEN_BYTES];
+        TOKEN_RANDOM.nextBytes(tokenBytes);
+        String token = HexFormat.of().formatHex(tokenBytes);
+        SteganographyV3.EmbedResult embedded = SteganographyV3.embed(validation.bufferedImage(), tokenBytes);
         byte[] signedBytes = ImageCodec.toPng(embedded.image());
         List<Long> hashes = PerceptualHash.computeVariants(validation.bufferedImage());
 
@@ -176,8 +174,11 @@ public class ImageRecordService {
         }
 
         byte[] tokenBytes = HexFormat.of().parseHex(record.getToken());
-        byte[] mac = watermarkCrypto.mac(tokenBytes);
-        Steganography.EmbedResult embedded = Steganography.embed(original, tokenBytes, mac);
+        if (tokenBytes.length != SteganographyV3.TOKEN_BYTES) {
+            throw new ValidationException("LEGACY_KEY_UPGRADE_REQUIRED",
+                    "This legacy record uses an older key. Register its original again to create a stronger signed copy.");
+        }
+        SteganographyV3.EmbedResult embedded = SteganographyV3.embed(original, tokenBytes);
 
         FileStorageService.StoredFileResult signedStored =
                 storageService.storeBytes(ImageCodec.toPng(embedded.image()), ".png");

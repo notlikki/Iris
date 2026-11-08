@@ -1,6 +1,7 @@
 package com.iris;
 
 import com.iris.stego.Steganography;
+import com.iris.stego.SteganographyV2;
 import com.iris.stego.WatermarkRecovery;
 import org.junit.jupiter.api.Test;
 import javax.imageio.*;
@@ -15,16 +16,18 @@ import static org.junit.jupiter.api.Assertions.*;
 class WatermarkStressTest {
     private static final byte[] TOKEN = HexFormat.of().parseHex("0123456789abcdef");
     private static final byte[] MAC = {17, 34, 51, 68};
+    private static final byte[] TOKEN_V2 =
+            HexFormat.of().parseHex("0123456789abcdef01234567");
 
     @Test
     void stressMatrix() throws Exception {
         List<org.junit.jupiter.api.function.Executable> checks = new ArrayList<>();
         for (long seed : new long[]{61, 83, 101}) {
             BufferedImage source = new SteganographyTest().sampleImage(640, 480, seed);
-            BufferedImage signed = Steganography.embed(source, TOKEN, MAC).image();
+            BufferedImage signed = SteganographyV2.embed(source, TOKEN_V2).image();
             Map<String, BufferedImage> cases = attacks(signed);
             for (var entry : cases.entrySet()) {
-                checks.add(() -> assertTrue(correct(recover(entry.getValue())),
+                checks.add(() -> assertTrue(correctV2(recoverV2(entry.getValue())),
                         "Payload recovery failed: " + entry.getKey() + ", seed " + seed));
             }
         }
@@ -35,7 +38,7 @@ class WatermarkStressTest {
     void unsignedImagesDoNotAcquireAnAuthenticatedPayload() throws Exception {
         BufferedImage unsigned = new SteganographyTest().sampleImage(640, 480, 61);
         for (var entry : attacks(unsigned).entrySet()) {
-            assertNull(recover(entry.getValue()), "False match: " + entry.getKey());
+            assertNull(recoverV2(entry.getValue()), "False match: " + entry.getKey());
         }
     }
 
@@ -67,12 +70,12 @@ class WatermarkStressTest {
 
     @Test
     void centredCropThenResizeRecoversThroughKnownSizeFractions() {
-        BufferedImage signed = Steganography.embed(
-                new SteganographyTest().sampleImage(640, 480, 61), TOKEN, MAC).image();
+        BufferedImage signed = SteganographyV2.embed(
+                new SteganographyTest().sampleImage(640, 480, 61), TOKEN_V2).image();
         BufferedImage cropped = signed.getSubimage(120, 90, 400, 300);
         BufferedImage resized = resize(cropped, 200, 150);
 
-        assertTrue(correct(recover(resized)),
+        assertTrue(correctV2(recoverV2(resized)),
                 "A 5/8 crop then 50% resize should recover through a known-size fraction");
     }
 
@@ -80,7 +83,18 @@ class WatermarkStressTest {
         var result = Steganography.extractRobust(image);
         if (correct(result)) return result;
         return WatermarkRecovery.recover(image, List.of(new WatermarkRecovery.Size(640, 480)),
-                WatermarkStressTest::correct);
+                Steganography::extractRobust, WatermarkStressTest::correct);
+    }
+
+    private static SteganographyV2.Extracted recoverV2(BufferedImage image) {
+        var result = SteganographyV2.extractRobust(image);
+        if (correctV2(result)) return result;
+        return WatermarkRecovery.recover(image, List.of(new WatermarkRecovery.Size(640, 480)),
+                SteganographyV2::extractRobust, WatermarkStressTest::correctV2);
+    }
+
+    private static boolean correctV2(SteganographyV2.Extracted value) {
+        return value != null && Arrays.equals(TOKEN_V2, value.token());
     }
 
     private static Map<String, BufferedImage> attacks(BufferedImage signed) throws IOException {

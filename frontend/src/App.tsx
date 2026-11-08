@@ -122,7 +122,9 @@ export const App: React.FC = () => {
       setShowVerification(true);
       if (result.matched && result.record) {
         setSelectedRecord(result.record);
-        setSuccessMessage(`Original recovered via ${METHOD_LABEL[result.method] ?? result.method}.`);
+        setSuccessMessage(result.method === 'PHASH'
+          ? 'Possible visual match found. The hidden key could not be recovered.'
+          : `Original identified via ${METHOD_LABEL[result.method] ?? result.method}.`);
       }
       if (showAuditLogs) {
         fetchAuditLogs();

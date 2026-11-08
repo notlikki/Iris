@@ -1,4 +1,4 @@
-export type MatchMethod = 'LSB' | 'SPREAD' | 'PHASH' | 'NONE';
+export type MatchMethod = 'CHECKSUM' | 'LSB' | 'SPREAD' | 'PHASH' | 'NONE';
 
 export interface ImageRecordDto {
   id: number;
