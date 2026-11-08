@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { UploadIcon, AlertCircleIcon, KeyIcon, SearchIcon } from './icons';
 import './ActionPanel.css';
 
@@ -26,6 +26,19 @@ export const ActionPanel: React.FC<Props> = ({ mode, onModeChange, onSign, onVer
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isSign = mode === 'sign';
+
+  useEffect(() => {
+    setSelectedFile(null);
+    setIsDragOver(false);
+    setErrorMsg(null);
+    setPreviewUrl(null);
+  }, [mode]);
+
+  useEffect(() => () => {
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+    }
+  }, [previewUrl]);
 
   const validateAndSetFile = (file: File) => {
     setErrorMsg(null);

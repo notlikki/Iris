@@ -1,6 +1,5 @@
 package com.iris.stego;
 
-import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -561,9 +560,11 @@ public final class Steganography {
     private static BufferedImage copy(BufferedImage source) {
         int type = source.getColorModel().hasAlpha() ? BufferedImage.TYPE_INT_ARGB : BufferedImage.TYPE_INT_RGB;
         BufferedImage target = new BufferedImage(source.getWidth(), source.getHeight(), type);
-        Graphics2D g = target.createGraphics();
-        g.drawImage(source, 0, 0, null);
-        g.dispose();
+        for (int y = 0; y < source.getHeight(); y++) {
+            for (int x = 0; x < source.getWidth(); x++) {
+                target.setRGB(x, y, source.getRGB(x, y));
+            }
+        }
         return target;
     }
 

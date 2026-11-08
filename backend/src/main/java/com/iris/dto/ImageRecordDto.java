@@ -23,7 +23,8 @@ public record ImageRecordDto(
         Instant createdAt,
         String originalUrl,
         String signedUrl,
-        String downloadUrl
+        String downloadUrl,
+        String signedDownloadUrl
 ) {
     public static ImageRecordDto fromEntity(ImageRecord record) {
         return new ImageRecordDto(
@@ -45,7 +46,8 @@ public record ImageRecordDto(
                 record.getCreatedAt(),
                 "/api/records/" + record.getId() + "/original",
                 "/api/records/" + record.getId() + "/signed",
-                "/api/records/" + record.getId() + "/download"
+                "/api/records/" + record.getId() + "/download",
+                "/api/records/" + record.getId() + "/download-signed"
         );
     }
 }

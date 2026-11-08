@@ -23,6 +23,8 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.util.Random;
 
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.startsWith;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -73,6 +75,11 @@ class RecordIntegrationTest {
 
         byte[] signed = download(record.get("signedUrl").asText());
         JsonNode verification = verify(signed, "signed.png");
+
+        mockMvc.perform(get("/api/records/" + id + "/download-signed"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Type", startsWith("image/png")))
+                .andExpect(header().string("Content-Disposition", containsString("attachment")));
 
         assertTrue(verification.get("matched").asBoolean());
         assertEquals("LSB", verification.get("method").asText());

@@ -156,6 +156,17 @@ public class ImageRecordService {
         return new DownloadInfo(resource, "restored_" + record.getOriginalFilename(), record.getContentType());
     }
 
+    public DownloadInfo getSignedDownloadInfo(Long id) {
+        ImageRecord record = requireRecord(id);
+        Resource resource = storageService.loadAsResource(record.getSignedStorageKey());
+        auditService.recordEvent(AuditEventType.IMAGE_DOWNLOAD, record.getId(), "Signed image downloaded",
+                record.getOriginalFilename());
+        String base = record.getOriginalFilename();
+        int dot = base.lastIndexOf('.');
+        String filename = (dot > 0 ? base.substring(0, dot) : base) + "_signed.png";
+        return new DownloadInfo(resource, filename, "image/png");
+    }
+
     public BufferedImage loadOriginalImage(ImageRecord record) {
         return ImageCodec.read(storageService.readBytes(record.getOriginalStorageKey()));
     }

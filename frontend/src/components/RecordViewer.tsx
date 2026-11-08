@@ -77,6 +77,11 @@ export const RecordViewer: React.FC<Props> = ({ record, onResign, isResigning })
             {isResigning ? 'Re-signing…' : 'Re-sign'}
           </button>
 
+          <a className="btn" href={record.signedDownloadUrl} download>
+            <DownloadIcon size={15} />
+            <span>Download signed</span>
+          </a>
+
           <a className="btn btn-primary" href={record.downloadUrl} download>
             <DownloadIcon size={15} />
             <span>Restore original</span>

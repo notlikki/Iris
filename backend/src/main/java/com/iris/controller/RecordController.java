@@ -79,6 +79,18 @@ public class RecordController {
                 .body(download.resource());
     }
 
+    @GetMapping("/records/{id}/download-signed")
+    public ResponseEntity<Resource> downloadSigned(@PathVariable("id") Long id) {
+        ImageRecordService.DownloadInfo download = recordService.getSignedDownloadInfo(id);
+        ContentDisposition disposition = ContentDisposition.attachment()
+                .filename(download.filename(), StandardCharsets.UTF_8)
+                .build();
+        return ResponseEntity.ok()
+                .contentType(MediaType.IMAGE_PNG)
+                .headers(headers -> headers.setContentDisposition(disposition))
+                .body(download.resource());
+    }
+
     @DeleteMapping("/records/{id}")
     public ResponseEntity<Map<String, Object>> delete(@PathVariable("id") Long id) {
         recordService.delete(id);

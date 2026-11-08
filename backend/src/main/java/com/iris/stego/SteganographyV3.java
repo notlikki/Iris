@@ -1,6 +1,5 @@
 package com.iris.stego;
 
-import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -17,8 +16,8 @@ public final class SteganographyV3 {
     public static final int MIN_ROBUST_PIXELS = CODE_BITS * 8 * 8;
     private static final boolean[] CODE_SYNC = ConvolutionalCode.encode(SYNC, false);
     private static final int STRIDE = 37;
-    private static final Grid COARSE = new Grid(16, 18, 20);
-    private static final Grid FINE = new Grid(8, 6, 10);
+    private static final Grid COARSE = new Grid(16, 8, 10, 34);
+    private static final Grid FINE = new Grid(8, 10, 14, 14);
 
     private SteganographyV3() {}
     public record Extracted(byte[] token) {}
@@ -29,11 +28,7 @@ public final class SteganographyV3 {
         if (token == null || token.length != TOKEN_BYTES) {
             throw new IllegalArgumentException("Watermark token must be 12 bytes");
         }
-        BufferedImage image = new BufferedImage(source.getWidth(), source.getHeight(),
-                source.getColorModel().hasAlpha() ? BufferedImage.TYPE_INT_ARGB : BufferedImage.TYPE_INT_RGB);
-        Graphics2D graphics = image.createGraphics();
-        graphics.drawImage(source, 0, 0, null);
-        graphics.dispose();
+        BufferedImage image = copy(source);
         byte[] payload = new byte[PAYLOAD_BYTES];
         System.arraycopy(SYNC, 0, payload, 0, SYNC.length);
         System.arraycopy(token, 0, payload, SYNC.length, TOKEN_BYTES);
@@ -109,10 +104,12 @@ public final class SteganographyV3 {
         final int block;
         final double strength;
         final double maxStep;
-        Grid(int block, double strength, double maxStep) {
+        final double edgeLimit;
+        Grid(int block, double strength, double maxStep, double edgeLimit) {
             this.block = block;
             this.strength = strength;
             this.maxStep = maxStep;
+            this.edgeLimit = edgeLimit;
         }
 
         int embed(BufferedImage image, boolean[] coded) {
@@ -132,17 +129,18 @@ public final class SteganographyV3 {
                     }
                     double difference = (left - right) / (block * block / 2.0);
                     // Strong natural edges are erasures, not targets for large visible changes.
-                    if (Math.abs(difference) > strength * 2) continue;
+                    if (Math.abs(difference) > edgeLimit) continue;
                     boolean one = coded[(col + STRIDE * row) % coded.length];
                     double mean = sum / (block * block);
                     double texture = Math.sqrt(Math.max(0, squares / (block * block) - mean * mean));
-                    double adapted = 4 + (strength - 4) * Math.min(1, texture / 20);
+                    double adapted = 1.5 + (strength - 1.5) * Math.min(1, texture / 24);
                     double target = one ? adapted : -adapted;
                     if ((one && difference >= target) || (!one && difference <= target)) continue;
                     double amplitude = Math.max(-maxStep, Math.min(maxStep, (target - difference) * Math.PI / 4));
                     for (int dx = 0; dx < block; dx++) {
                         int offset = (int) Math.round(amplitude * Math.sin(2 * Math.PI * dx / block));
                         for (int dy = 0; dy < block; dy++) {
+                            if (offset == 0) continue;
                             int rgb = image.getRGB(x + dx, y + dy);
                             int r = clamp(((rgb >> 16) & 255) + offset);
                             int g = clamp(((rgb >> 8) & 255) + offset);
@@ -200,7 +198,7 @@ public final class SteganographyV3 {
             for (int row = 0; row < rows; row += stepY) {
                 for (int col = 0; col < cols; col += stepX) {
                     double difference = integral.delta(x + col * block, y + row * block, block);
-                    if (Math.abs(difference) > strength * 2.5) continue;
+                    if (Math.abs(difference) > edgeLimit) continue;
                     votes[(col + STRIDE * row) % CODE_BITS] += Math.max(-strength, Math.min(strength, difference));
                 }
             }
@@ -209,6 +207,17 @@ public final class SteganographyV3 {
     }
 
     private static int clamp(int value) { return Math.max(0, Math.min(255, value)); }
+
+    private static BufferedImage copy(BufferedImage source) {
+        int type = source.getColorModel().hasAlpha() ? BufferedImage.TYPE_INT_ARGB : BufferedImage.TYPE_INT_RGB;
+        BufferedImage copy = new BufferedImage(source.getWidth(), source.getHeight(), type);
+        for (int y = 0; y < source.getHeight(); y++) {
+            for (int x = 0; x < source.getWidth(); x++) {
+                copy.setRGB(x, y, source.getRGB(x, y));
+            }
+        }
+        return copy;
+    }
     private static double luma(int rgb) {
         return .299 * ((rgb >> 16) & 255) + .587 * ((rgb >> 8) & 255) + .114 * (rgb & 255);
     }

@@ -20,6 +20,7 @@ export interface ImageRecordDto {
   originalUrl: string;
   signedUrl: string;
   downloadUrl: string;
+  signedDownloadUrl: string;
 }
 
 export interface VerificationResponseDto {

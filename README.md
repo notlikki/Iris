@@ -207,6 +207,7 @@ curl -F "file=@tampered.jpg" http://localhost:8080/api/verify
 | `GET` | `/api/records/{id}/original` | Stream the untouched original |
 | `GET` | `/api/records/{id}/signed` | Stream the signed image |
 | `GET` | `/api/records/{id}/download` | Download the original as `restored_<name>` |
+| `GET` | `/api/records/{id}/download-signed` | Download the signed image as `<name>_signed.png` |
 | `POST` | `/api/records/{id}/resign` | Re-embed the original with the current watermark |
 | `DELETE` | `/api/records/{id}` | Delete the record, files, and linked verifications |
 | `POST` | `/api/verify` | Verify an upload and recover its record |
