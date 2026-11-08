@@ -5,6 +5,8 @@ import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.zip.CRC32;
 
 /**
@@ -37,10 +39,10 @@ public final class Steganography {
 
     private static final int BLOCK = 16;
     private static final int HALF = 8;
-    private static final double DELTA = 16;
-    private static final double MIN_DELTA = 4;
+    private static final double DELTA = 20;
+    private static final double MIN_DELTA = 6;
     private static final double TEXTURE_FULL = 20;
-    private static final int MAX_STEP = 20;
+    private static final int MAX_STEP = 28;
 
     private static final int INDEX_STRIDE = 37;
     private static final int PHASE_ROWS = 20;
@@ -138,7 +140,8 @@ public final class Steganography {
     }
 
     public static Extracted extractRobust(BufferedImage image) {
-        Extracted direct = decodeRobust(image, 0, 0, false);
+        LumaIntegral integral = new LumaIntegral(image);
+        Extracted direct = decodeRobust(image, integral, 0, 0, false);
         if (direct != null) {
             return direct;
         }
@@ -155,7 +158,7 @@ public final class Steganography {
                 if (cols < 1 || rows < 1 || (long) cols * rows < ROBUST_BITS) {
                     continue;
                 }
-                Votes votes = collectVotes(image, ox, oy, cols, rows, true);
+                Votes votes = collectVotes(integral, ox, oy, cols, rows, true);
                 Rotation rotation = bestRotation(votes);
                 if (rotation.score() < MIN_PHASE_SCORE) {
                     continue;
@@ -172,7 +175,7 @@ public final class Steganography {
             if (attempts++ >= MAX_PHASE_ATTEMPTS) {
                 break;
             }
-            Extracted extracted = decodeRobust(image, candidate.ox(), candidate.oy(), false);
+            Extracted extracted = decodeRobust(image, integral, candidate.ox(), candidate.oy(), false);
             if (extracted != null) {
                 return extracted;
             }
@@ -180,33 +183,39 @@ public final class Steganography {
         return null;
     }
 
-    private static Extracted decodeRobust(BufferedImage image, int ox, int oy, boolean limited) {
+    private static Extracted decodeRobust(BufferedImage image, LumaIntegral integral, int ox, int oy, boolean limited) {
         int cols = (image.getWidth() - ox) / BLOCK;
         int rows = (image.getHeight() - oy) / BLOCK;
         if (cols < 1 || rows < 1 || (long) cols * rows < ROBUST_BITS) {
             return null;
         }
 
-        Votes votes = collectVotes(image, ox, oy, cols, rows, limited);
-        Rotation rotation = bestRotation(votes);
-        if (rotation.score() < MIN_DECODE_SCORE) {
-            return null;
-        }
-
+        Votes votes = collectVotes(integral, ox, oy, cols, rows, limited);
         boolean[] bits = toBits(votes);
-        double[] payloadScores = new double[ROBUST_BITS];
-        byte[] payload = new byte[ROBUST_PAYLOAD_BYTES];
-        for (int k = 0; k < ROBUST_BITS; k++) {
-            int source = (k + rotation.rotation()) % ROBUST_BITS;
-            payloadScores[k] = votes.scores()[source];
-            if (bits[source]) {
-                payload[k / 8] |= (byte) (1 << (7 - (k % 8)));
+        List<Rotation> rotations = rankedRotations(votes);
+        for (int attempt = 0; attempt < Math.min(4, rotations.size()); attempt++) {
+            Rotation rotation = rotations.get(attempt);
+            if (rotation.score() < MIN_DECODE_SCORE) {
+                break;
+            }
+            double[] payloadScores = new double[ROBUST_BITS];
+            byte[] payload = new byte[ROBUST_PAYLOAD_BYTES];
+            for (int k = 0; k < ROBUST_BITS; k++) {
+                int source = (k + rotation.rotation()) % ROBUST_BITS;
+                payloadScores[k] = votes.scores()[source];
+                if (bits[source]) {
+                    payload[k / 8] |= (byte) (1 << (7 - (k % 8)));
+                }
+            }
+            Extracted decoded = parsePayload(payload, ROBUST_SYNC, payloadScores);
+            if (decoded != null) {
+                return decoded;
             }
         }
-        return parsePayload(payload, ROBUST_SYNC, payloadScores);
+        return null;
     }
 
-    private static Votes collectVotes(BufferedImage image, int ox, int oy, int cols, int rows, boolean limited) {
+    private static Votes collectVotes(LumaIntegral integral, int ox, int oy, int cols, int rows, boolean limited) {
         double[] scores = new double[ROBUST_BITS];
         int sampleRows = limited ? Math.min(rows, PHASE_ROWS) : rows;
         int sampleCols = limited ? Math.min(cols, PHASE_COLS) : cols;
@@ -215,34 +224,33 @@ public final class Steganography {
             int j = sampleRows == rows ? r : (int) ((long) r * rows / sampleRows);
             for (int c = 0; c < sampleCols; c++) {
                 int i = sampleCols == cols ? c : (int) ((long) c * cols / sampleCols);
-                double delta = blockDelta(image, ox + i * BLOCK, oy + j * BLOCK);
+                double delta = integral.blockDelta(ox + i * BLOCK, oy + j * BLOCK);
                 int index = Math.floorMod(i + j * INDEX_STRIDE, ROBUST_BITS);
-                scores[index] += delta;
+                // Limit outliers so an edited high-contrast region cannot drown out intact copies.
+                scores[index] += Math.max(-DELTA, Math.min(DELTA, delta));
             }
         }
         return new Votes(scores);
     }
 
     private static Rotation bestRotation(Votes votes) {
-        boolean[] bits = toBits(votes);
-        int syncBits = ROBUST_SYNC.length * 8;
-        int bestRotation = 0;
-        int bestScore = -1;
+        return rankedRotations(votes).get(0);
+    }
 
+    private static List<Rotation> rankedRotations(Votes votes) {
+        boolean[] bits = toBits(votes);
+        List<Rotation> rotations = new ArrayList<>(ROBUST_BITS);
         for (int rotation = 0; rotation < ROBUST_BITS; rotation++) {
             int score = 0;
-            for (int k = 0; k < syncBits; k++) {
-                int source = (k + rotation) % ROBUST_BITS;
-                if (bits[source] == bitAt(ROBUST_SYNC, k)) {
+            for (int k = 0; k < ROBUST_SYNC.length * 8; k++) {
+                if (bits[(k + rotation) % ROBUST_BITS] == bitAt(ROBUST_SYNC, k)) {
                     score++;
                 }
             }
-            if (score > bestScore) {
-                bestScore = score;
-                bestRotation = rotation;
-            }
+            rotations.add(new Rotation(rotation, score));
         }
-        return new Rotation(bestRotation, bestScore);
+        rotations.sort(Comparator.comparingInt(Rotation::score).reversed());
+        return rotations;
     }
 
     private static boolean[] toBits(Votes votes) {
@@ -275,6 +283,9 @@ public final class Steganography {
         double texture = blockStdDev(image, x, y);
         double targetDelta = MIN_DELTA + (DELTA - MIN_DELTA) * Math.min(1.0, texture / TEXTURE_FULL);
         double target = one ? targetDelta : -targetDelta;
+        if ((one && delta >= target) || (!one && delta <= target)) {
+            return;
+        }
         double shift = (target - delta) / 2.0;
         if (Math.abs(shift) < 0.5) {
             return;
@@ -371,9 +382,10 @@ public final class Steganography {
     }
 
     /**
-     * Repairs a few flipped bits by searching the least-confident bits first and
-     * validating against CRC-32 plus the marker. The service still validates the
-     * HMAC, so a false correction can never be accepted as a record.
+     * Repair soft-decision errors without changing the stored payload format.
+     * CRC syndromes are linear: combine two small error subsets with a hash lookup,
+     * rather than brute-forcing every six-bit combination. Marker bits are known.
+     * CRC is only an error check; callers must still authenticate the recovered MAC.
      */
     private static byte[] correctPayload(byte[] payload, byte[] marker, double[] scores) {
         byte[] working = payload.clone();
@@ -383,58 +395,82 @@ public final class Steganography {
         if (scores == null) {
             return null;
         }
-
-        int totalBits = working.length * 8;
-        List<Integer> order = new ArrayList<>(totalBits);
-        for (int i = 0; i < totalBits; i++) {
+        System.arraycopy(marker, 0, working, 0, marker.length);
+        int target = syndrome(working);
+        if (target == 0) {
+            return working;
+        }
+        List<Integer> order = new ArrayList<>();
+        for (int i = marker.length * 8; i < working.length * 8; i++) {
             order.add(i);
         }
         order.sort(Comparator.comparingDouble(i -> Math.abs(scores[i])));
-
-        int limit = Math.min(48, order.size());
-        for (int a = 0; a < limit; a++) {
-            int i = order.get(a);
-            flip(working, i);
-            if (valid(working, marker)) {
-                return working;
-            }
-            flip(working, i);
+        int count = Math.min(64, order.size());
+        int[] effects = new int[count];
+        for (int i = 0; i < count; i++) {
+            flip(working, order.get(i));
+            effects[i] = syndrome(working) ^ target;
+            flip(working, order.get(i));
         }
-
-        for (int a = 0; a < limit; a++) {
-            int i = order.get(a);
-            flip(working, i);
-            for (int b = a + 1; b < limit; b++) {
-                int j = order.get(b);
-                flip(working, j);
-                if (valid(working, marker)) {
-                    return working;
-                }
-                flip(working, j);
-            }
-            flip(working, i);
-        }
-
-        for (int a = 0; a < limit; a++) {
-            int i = order.get(a);
-            flip(working, i);
-            for (int b = a + 1; b < limit; b++) {
-                int j = order.get(b);
-                flip(working, j);
-                for (int c = b + 1; c < limit; c++) {
-                    int k = order.get(c);
-                    flip(working, k);
-                    if (valid(working, marker)) {
-                        return working;
+        List<Repair> repairs = new ArrayList<>();
+        repairs.add(new Repair(0, 0));
+        for (int i = 0; i < count; i++) {
+            repairs.add(new Repair(effects[i], 1L << i));
+            for (int j = i + 1; j < count; j++) {
+                repairs.add(new Repair(effects[i] ^ effects[j], (1L << i) | (1L << j)));
+                // Six-bit repair is restricted to the 28 weakest bits to bound CPU/memory.
+                if (i < 28 && j < 28) {
+                    for (int k = j + 1; k < Math.min(28, count); k++) {
+                        repairs.add(new Repair(effects[i] ^ effects[j] ^ effects[k],
+                                (1L << i) | (1L << j) | (1L << k)));
                     }
-                    flip(working, k);
                 }
-                flip(working, j);
             }
-            flip(working, i);
         }
-        return null;
+        Map<Integer, List<Long>> bySyndrome = new HashMap<>();
+        for (Repair repair : repairs) {
+            bySyndrome.computeIfAbsent(repair.syndrome(), ignored -> new ArrayList<>()).add(repair.mask());
+        }
+        long bestMask = 0;
+        double bestCost = Double.POSITIVE_INFINITY;
+        for (Repair repair : repairs) {
+            List<Long> complements = bySyndrome.get(target ^ repair.syndrome());
+            if (complements == null) {
+                continue;
+            }
+            for (long complement : complements) {
+                long mask = repair.mask() ^ complement;
+                double cost = 0;
+                for (int i = 0; i < count; i++) {
+                    if ((mask & (1L << i)) != 0) {
+                        cost += 1 + Math.abs(scores[order.get(i)]);
+                    }
+                }
+                if (cost < bestCost) {
+                    bestCost = cost;
+                    bestMask = mask;
+                }
+            }
+        }
+        if (!Double.isFinite(bestCost)) {
+            return null;
+        }
+        for (int i = 0; i < count; i++) {
+            if ((bestMask & (1L << i)) != 0) {
+                flip(working, order.get(i));
+            }
+        }
+        return valid(working, marker) ? working : null;
     }
+
+    private static int syndrome(byte[] data) {
+        int offset = data.length - 4;
+        int stored = ((data[offset] & 255) << 24) | ((data[offset + 1] & 255) << 16)
+                | ((data[offset + 2] & 255) << 8) | (data[offset + 3] & 255);
+        return stored ^ crc32(data, 0, offset);
+    }
+
+    private record Repair(int syndrome, long mask) {}
 
     private static boolean valid(byte[] data, byte[] marker) {
         for (int i = 0; i < marker.length; i++) {
@@ -533,6 +569,30 @@ public final class Steganography {
 
     private static int clamp(int value) {
         return Math.min(255, Math.max(0, value));
+    }
+
+    private static final class LumaIntegral {
+        private final double[][] sums;
+
+        LumaIntegral(BufferedImage image) {
+            sums = new double[image.getHeight() + 1][image.getWidth() + 1];
+            for (int y = 0; y < image.getHeight(); y++) {
+                double row = 0;
+                for (int x = 0; x < image.getWidth(); x++) {
+                    row += luma(image.getRGB(x, y));
+                    sums[y + 1][x + 1] = sums[y][x + 1] + row;
+                }
+            }
+        }
+
+        private double area(int x, int y, int width, int height) {
+            return sums[y + height][x + width] - sums[y][x + width]
+                    - sums[y + height][x] + sums[y][x];
+        }
+
+        double blockDelta(int x, int y) {
+            return (area(x, y, HALF, BLOCK) - area(x + HALF, y, HALF, BLOCK)) / (BLOCK * HALF);
+        }
     }
 
     private record LsbInfo(boolean embedded, int copies) {

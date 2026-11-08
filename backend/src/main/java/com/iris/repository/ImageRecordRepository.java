@@ -11,5 +11,7 @@ import java.util.Optional;
 public interface ImageRecordRepository extends JpaRepository<ImageRecord, Long> {
     List<ImageRecord> findAllByOrderByCreatedAtDesc();
 
+    Optional<ImageRecord> findFirstByOriginalChecksum(String checksum);
+
     Optional<ImageRecord> findByToken(String token);
 }

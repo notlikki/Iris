@@ -9,6 +9,7 @@ interface Props {
 }
 
 const METHOD_LABEL: Record<string, string> = {
+  CHECKSUM: 'Exact original file',
   LSB: 'Embedded key · LSB',
   SPREAD: 'Embedded key · robust',
   PHASH: 'Perceptual match',

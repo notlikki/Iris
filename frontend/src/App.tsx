@@ -18,6 +18,7 @@ import './App.css';
 type Mode = 'sign' | 'verify';
 
 const METHOD_LABEL: Record<string, string> = {
+  CHECKSUM: 'exact original file',
   LSB: 'embedded key (LSB)',
   SPREAD: 'embedded key (robust)',
   PHASH: 'perceptual hash'
@@ -43,9 +44,11 @@ export const App: React.FC = () => {
       }
       const data: ImageRecordDto[] = await response.json();
       setRecords(data);
-      setSelectedRecord((current) => current ?? data[0] ?? null);
+      setSelectedRecord((current) => current
+        ? data.find((record) => record.id === current.id) ?? data[0] ?? null
+        : data[0] ?? null);
     } catch (err) {
-      console.error('Error fetching records:', err);
+      setErrorMessage(err instanceof Error ? err.message : 'Failed to load registered images');
     }
   }, []);
 

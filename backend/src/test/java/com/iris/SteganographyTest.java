@@ -2,6 +2,8 @@ package com.iris;
 
 import com.iris.stego.PerceptualHash;
 import com.iris.stego.Steganography;
+import com.iris.stego.WatermarkRecovery;
+import java.awt.RenderingHints;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -134,13 +136,100 @@ class SteganographyTest {
         assertTrue(PerceptualHash.distance(original, PerceptualHash.compute(noise)) > 10);
     }
 
+    @Test
+    @DisplayName("Authenticated robust payload survives resizing and combined crop/JPEG edits")
+    void robustGeometryRecovery() throws IOException {
+        BufferedImage source = sampleImage(640, 480, 41);
+        BufferedImage signed = Steganography.embed(source, token(), MAC).image();
+        for (double scale : new double[]{0.5, 0.7, 1.5}) {
+            BufferedImage edited = resizeImage(signed, scale);
+            assertPayload(recover(edited, 640, 480));
+        }
+        BufferedImage crop = signed.getSubimage(37, 21, 560, 420);
+        assertPayload(recover(roundTripJpeg(resizeImage(crop, 0.5)), 640, 480));
+        // Format conversion must recover the actual payload, never a perceptual hash.
+        for (String format : new String[]{"png", "bmp", "jpg"}) {
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            assertTrue(ImageIO.write(signed, format, output));
+            assertPayload(Steganography.extractRobust(ImageIO.read(new ByteArrayInputStream(output.toByteArray()))));
+        }
+    }
+
+    @Test
+    @DisplayName("Robust payload survives large local edits and stronger JPEG compression")
+    void robustSurvivesLocalEditsAndCompression() throws IOException {
+        BufferedImage signed = Steganography.embed(sampleImage(640, 480, 53), token(), MAC).image();
+        Graphics2D graphics = signed.createGraphics();
+        graphics.setColor(java.awt.Color.BLACK);
+        graphics.fillRect(100, 100, 180, 160);
+        graphics.dispose();
+        assertPayload(Steganography.extractRobust(signed));
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        javax.imageio.ImageWriter writer = ImageIO.getImageWritersByFormatName("jpg").next();
+        try (javax.imageio.stream.ImageOutputStream stream = ImageIO.createImageOutputStream(output)) {
+            writer.setOutput(stream);
+            javax.imageio.ImageWriteParam parameters = writer.getDefaultWriteParam();
+            parameters.setCompressionMode(javax.imageio.ImageWriteParam.MODE_EXPLICIT);
+            parameters.setCompressionQuality(0.35f);
+            writer.write(null, new javax.imageio.IIOImage(signed, null, null), parameters);
+        } finally {
+            writer.dispose();
+        }
+        assertPayload(Steganography.extractRobust(ImageIO.read(new ByteArrayInputStream(output.toByteArray()))));
+    }
+
+    @Test
+    @DisplayName("Geometry search rejects unsigned content and unauthenticated payloads")
+    void geometryRejectsFalseMatches() {
+        assertNull(recover(sampleImage(320, 240, 77), 640, 480));
+        BufferedImage signed = Steganography.embed(sampleImage(640, 480, 41), token(), MAC).image();
+        assertNull(WatermarkRecovery.recover(resizeImage(signed, 0.5),
+                List.of(new WatermarkRecovery.Size(640, 480)), ignored -> false));
+    }
+
+    @Test
+    @DisplayName("Stronger watermark retains image quality on representative content")
+    void watermarkQuality() {
+        BufferedImage source = sampleImage(640, 480, 41);
+        BufferedImage signed = Steganography.embed(source, token(), MAC).image();
+        double squaredError = 0;
+        for (int y = 0; y < source.getHeight(); y++) {
+            for (int x = 0; x < source.getWidth(); x++) {
+                for (int shift : new int[]{0, 8, 16}) {
+                    int difference = ((source.getRGB(x, y) >> shift) & 255)
+                            - ((signed.getRGB(x, y) >> shift) & 255);
+                    squaredError += difference * difference;
+                }
+            }
+        }
+        double mse = squaredError / (3.0 * source.getWidth() * source.getHeight());
+        double psnr = 10 * Math.log10(255.0 * 255 / mse);
+        assertTrue(psnr >= 30, "Watermark PSNR was " + psnr + " dB");
+    }
+
+    private Steganography.Extracted recover(BufferedImage image, int width, int height) {
+        return WatermarkRecovery.recover(image, List.of(new WatermarkRecovery.Size(width, height)),
+                extracted -> java.util.Arrays.equals(token(), extracted.token())
+                        && java.util.Arrays.equals(MAC, extracted.mac()));
+    }
+
+    private BufferedImage resizeImage(BufferedImage image, double scale) {
+        BufferedImage result = new BufferedImage((int) Math.round(image.getWidth() * scale),
+                (int) Math.round(image.getHeight() * scale), BufferedImage.TYPE_INT_RGB);
+        Graphics2D graphics = result.createGraphics();
+        graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+        graphics.drawImage(image, 0, 0, result.getWidth(), result.getHeight(), null);
+        graphics.dispose();
+        return result;
+    }
+
     private void assertPayload(Steganography.Extracted extracted) {
         assertNotNull(extracted, "Expected a recoverable payload");
         assertArrayEquals(token(), extracted.token());
         assertArrayEquals(MAC, extracted.mac());
     }
 
-    private BufferedImage sampleImage(int width, int height, long seed) {
+    BufferedImage sampleImage(int width, int height, long seed) {
         BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {

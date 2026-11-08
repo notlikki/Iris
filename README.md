@@ -4,7 +4,7 @@
 ![Spring Boot](https://img.shields.io/badge/Spring_Boot-3.3-6DB33F)
 ![React](https://img.shields.io/badge/React-19-61DAFB)
 ![Node](https://img.shields.io/badge/Node-20.19%2B-339933)
-![Tests](https://img.shields.io/badge/tests-23_passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-33_passing-brightgreen)
 
 IRIS embeds an invisible, HMAC-bound key across an image and keeps the untouched original. Re-upload a tampered, cropped, or re-compressed copy and IRIS reads the key, finds the record, restores the exact original, and reports what changed.
 
@@ -42,7 +42,7 @@ The original image is never modified.
 | Layer | Technique | Survives | Fails on |
 |---|---|---|---|
 | **LSB** | Token + MAC + CRC-32 in the low bit of every RGB channel, repeated at 5 spread offsets | Lossless re-saves (PNG/BMP), local edits outside the payload windows | JPEG, resizing, filters |
-| **Robust** | Texture-weighted sine watermark in each 16×16 block. A 2D index turns translation into rotation; extraction searches every grid phase and rotation, repairs up to 3 weak bits, and validates the marker, CRC-32 and HMAC | JPEG re-compression, brightness/contrast, mild noise, arbitrary crops | Heavy rotation, large resize |
+| **Robust** | Stronger texture-weighted sine watermark in each 16×16 block; clipped soft votes, multiple sync candidates, bounded CRC-syndrome error repair, crop-phase search, and bounded resize normalization. Validates marker, CRC-32 and HMAC | Tested JPEG conversion/compression, tone changes, crops, resizing, and combined edits described below | Severe information loss, unsearched transforms, heavy rotation, filtering |
 | **pHash** | 64-bit perceptual hash stored in four cardinal orientations, compared by minimum Hamming distance | Resize, 90/180/270° rotation, colour changes, re-encoding | Different images |
 
 The key is 64 bits and the embedded authentication tag is a truncated HMAC-SHA-256. Only records whose key validates against the server secret are accepted.
@@ -145,7 +145,7 @@ cd backend
 Expected result:
 
 ```text
-Tests run: 23, Failures: 0, Errors: 0, Skipped: 0
+Tests run: 33, Failures: 0, Errors: 0, Skipped: 0
 ```
 
 Frontend checks:
@@ -199,7 +199,7 @@ Open **http://localhost:5173**. Vite proxies `/api` to port 8080.
 | Method | Meaning |
 |---|---|
 | `LSB` | Exact key read from a lossless copy |
-| `SPREAD` | Robust key recovered after compression, tone changes, or cropping |
+| `SPREAD` | Authenticated robust key recovered, including after bounded crop/resize normalization |
 | `PHASH` | Watermark unreadable; matched by perceptual hash (rotation, resize) |
 | `NONE` | No record matched |
 
@@ -280,7 +280,7 @@ iris/
 │       │   ├── dto/             API transfer objects
 │       │   └── config/          Storage, CORS, security headers
 │       ├── main/resources/      application.yml
-│       └── test/java/com/iris/  23 tests
+│       └── test/java/com/iris/  33 tests
 └── frontend/
     ├── package.json
     ├── vite.config.ts           dev proxy for /api
@@ -313,7 +313,13 @@ iris/
 
 These are inherent constraints, not missing features:
 
-- The robust watermark is built for accidental edits, re-encoding, and crops. A determined attacker can degrade or erase it with aggressive resizing, rotation, or filtering; those cases rely on the perceptual-hash fallback and are best-effort.
+- No invisible watermark can be guaranteed to survive arbitrary editing. Removing most pixels, extreme downsampling, heavy blur, or repainting can destroy its information. Visual matching remains a separate, approximate fallback.
+- Stronger embedding applies to newly signed copies. Previously downloaded copies must be signed again to receive the stronger signal; their existing payload format remains readable.
+- Resize recovery first tries distinct registered dimensions (newest first), then common inverse scales: 2×, 4/3×, 1.6×, 2.5×, 3×, 4×, 0.5×, and 2/3×. The search is limited to 20 attempts and 40 million normalized pixels, with at most 16 million pixels per attempt and 4096 pixels per side. A large registry or an unsearched crop/scale combination may therefore fail.
+- Automated synthetic-image tests recover the actual token and MAC after 50% and 70% resizing, 150% enlargement, PNG/BMP/JPEG conversion, a crop followed by 50% resizing and JPEG conversion, and an opaque local edit followed by JPEG quality 0.35 compression. These are reproducible test cases, not universal survival guarantees. Quality is checked with a minimum 30 dB PSNR on a representative synthetic image; visual acceptability still depends on content.
+- Error repair now combines CRC-syndrome subsets: up to four corrupted payload bits among the 64 weakest, or up to six among the 28 weakest, plus known-marker restoration. These are conditional search limits, not guaranteed correction for arbitrary errors. This decoder improvement also applies to existing signed copies without changing their embedded format.
+- Additional stress tests run six attacks across three synthetic fixtures: JPEG quality 0.10 and 0.05, quarter-size resizing, a 3×3 box blur, a crop retaining 40% of the area, and crop → half-size resize → JPEG quality 0.10. Unsigned versions of the same attacks must not acquire an authenticated payload. The previously failing combined attack is now covered by regression assertions.
+- The resized search accepts a result only when its HMAC is valid and its token exists in the registry. It does not promote a perceptual match to an authenticated watermark match.
 - Recovery restores the stored original bytes. It does not regenerate pixels that were never stored, so the database and storage are the source of truth.
 - The embedded authentication tag is a truncated HMAC (32 bits) over a 64-bit key. It binds a demonstration record against forgery but is not a full-strength cryptographic signature.
 - The LSB layer survives only lossless formats. Re-saving as JPEG drops it and relies on the robust layer.

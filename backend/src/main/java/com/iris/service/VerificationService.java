@@ -14,6 +14,7 @@ import com.iris.stego.ImageCodec;
 import com.iris.stego.PerceptualHash;
 import com.iris.stego.Steganography;
 import com.iris.stego.WatermarkCrypto;
+import com.iris.stego.WatermarkRecovery;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -111,6 +112,29 @@ public class VerificationService {
                 if (record != null) {
                     method = "SPREAD";
                 }
+            }
+        }
+
+        // Exact original bytes take precedence over approximate visual similarity.
+        if (record == null) {
+            record = recordRepository.findFirstByOriginalChecksum(candidateChecksum).orElse(null);
+            if (record != null) {
+                token = record.getToken();
+                method = "CHECKSUM";
+            }
+        }
+
+        if (record == null && recordRepository.count() > 0) {
+            List<WatermarkRecovery.Size> sizes = recordRepository.findAllByOrderByCreatedAtDesc().stream()
+                    .map(saved -> new WatermarkRecovery.Size(saved.getWidth(), saved.getHeight()))
+                    .distinct().toList();
+            Steganography.Extracted recovered = WatermarkRecovery.recover(candidate, sizes,
+                    extracted -> watermarkCrypto.verify(extracted.token(), extracted.mac())
+                            && recordRepository.findByToken(HexFormat.of().formatHex(extracted.token())).isPresent());
+            if (recovered != null) {
+                token = HexFormat.of().formatHex(recovered.token());
+                record = recordRepository.findByToken(token).orElse(null);
+                method = "SPREAD";
             }
         }
 

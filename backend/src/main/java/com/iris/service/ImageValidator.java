@@ -5,6 +5,9 @@ import com.iris.exception.ValidationException;
 import org.springframework.stereotype.Component;
 
 import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
+import javax.imageio.stream.ImageInputStream;
+import java.util.Iterator;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -44,35 +47,28 @@ public class ImageValidator {
         }
 
         BufferedImage image;
-        try {
-            image = ImageIO.read(new ByteArrayInputStream(bytes));
-        } catch (IOException e) {
+        int width;
+        int height;
+        try (ImageInputStream input = ImageIO.createImageInputStream(new ByteArrayInputStream(bytes))) {
+            Iterator<ImageReader> readers = ImageIO.getImageReaders(input);
+            if (!readers.hasNext()) {
+                throw new ValidationException("CORRUPT_IMAGE", "Could not decode image content.");
+            }
+            ImageReader reader = readers.next();
+            try {
+                reader.setInput(input, true, true);
+                width = reader.getWidth(0);
+                height = reader.getHeight(0);
+                validateDimensions(width, height);
+                image = reader.read(0);
+            } finally {
+                reader.dispose();
+            }
+        } catch (IOException | IllegalArgumentException e) {
             throw new ValidationException("CORRUPT_IMAGE", "Could not decode image content. File may be corrupt.");
         }
-
         if (image == null) {
-            throw new ValidationException("CORRUPT_IMAGE",
-                    "Failed to parse image data. Please ensure it is a valid JPEG, PNG, or BMP image.");
-        }
-
-        int width = image.getWidth();
-        int height = image.getHeight();
-
-        if (width <= 0 || height <= 0) {
-            throw new ValidationException("INVALID_DIMENSIONS", "Image has invalid dimensions.");
-        }
-
-        if (width > properties.getMaxWidth() || height > properties.getMaxHeight()) {
-            throw new ValidationException("IMAGE_TOO_LARGE_DIMENSIONS",
-                    String.format(Locale.ROOT, "Image dimensions (%dx%d) exceed maximum allowed size (%dx%d).",
-                            width, height, properties.getMaxWidth(), properties.getMaxHeight()));
-        }
-
-        long totalPixels = (long) width * height;
-        if (totalPixels > properties.getMaxPixels()) {
-            throw new ValidationException("IMAGE_TOO_MANY_PIXELS",
-                    String.format(Locale.ROOT, "Image total pixels (%d) exceed maximum limit (%d).",
-                            totalPixels, properties.getMaxPixels()));
+            throw new ValidationException("CORRUPT_IMAGE", "Could not decode image content.");
         }
 
         String canonicalContentType = switch (detectedFormat) {
@@ -84,6 +80,20 @@ public class ImageValidator {
         String extension = "." + detectedFormat;
 
         return new ImageValidationResult(image, detectedFormat, canonicalContentType, extension, width, height);
+    }
+
+    private void validateDimensions(int width, int height) {
+        if (width <= 0 || height <= 0) {
+            throw new ValidationException("INVALID_DIMENSIONS", "Image has invalid dimensions.");
+        }
+        if (width > properties.getMaxWidth() || height > properties.getMaxHeight()) {
+            throw new ValidationException("IMAGE_TOO_LARGE_DIMENSIONS",
+                    String.format(Locale.ROOT, "Image dimensions (%dx%d) exceed maximum allowed size (%dx%d).",
+                            width, height, properties.getMaxWidth(), properties.getMaxHeight()));
+        }
+        if ((long) width * height > properties.getMaxPixels()) {
+            throw new ValidationException("IMAGE_TOO_MANY_PIXELS", "Image exceeds the maximum pixel count.");
+        }
     }
 
     private String detectFormatFromMagicBytes(byte[] bytes) {

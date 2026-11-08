@@ -150,7 +150,7 @@ class RecordIntegrationTest {
     }
 
     @Test
-    @DisplayName("A resized image matches through a perceptual hash variant")
+    @DisplayName("A resized image recovers the authenticated watermark")
     void resizedImageMatchesThroughPerceptualHash() throws Exception {
         JsonNode record = register(samplePng(512, 384, 35), "resize-source.png");
         long id = record.get("id").asLong();
@@ -162,7 +162,7 @@ class RecordIntegrationTest {
 
         assertTrue(verification.get("matched").asBoolean(), "Resized image should still match");
         assertEquals(id, verification.get("record").get("id").asLong());
-        assertEquals("PHASH", verification.get("method").asText());
+        assertEquals("SPREAD", verification.get("method").asText());
     }
 
     @Test
@@ -188,6 +188,34 @@ class RecordIntegrationTest {
         mockMvc.perform(multipart("/api/records").file(file))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("UNSUPPORTED_FORMAT"));
+    }
+
+    @Test
+    @DisplayName("An exact original wins over a record with identical visual pixels")
+    void exactOriginalWinsOverPerceptualTie() throws Exception {
+        byte[] first = samplePng(128, 128, 99);
+        register(first, "first.png");
+        // Trailing bytes change the file checksum while leaving decoded pixels identical.
+        byte[] second = java.util.Arrays.copyOf(first, first.length + 1);
+        second[second.length - 1] = 42;
+        JsonNode expected = register(second, "second.png");
+        JsonNode result = verify(second, "second.png");
+        assertEquals(expected.get("id").asLong(), result.get("record").get("id").asLong());
+        assertEquals("CHECKSUM", result.get("method").asText());
+        assertTrue(result.get("exactMatch").asBoolean());
+    }
+
+    @Test
+    @DisplayName("Crop, half-size resize and JPEG still recover an authenticated record")
+    void combinedEditsRecoverWatermark() throws Exception {
+        JsonNode record = register(samplePng(640, 480, 41), "combined.png");
+        BufferedImage signed = ImageIO.read(new ByteArrayInputStream(download(record.get("signedUrl").asText())));
+        BufferedImage cropped = signed.getSubimage(37, 21, 560, 420);
+        byte[] compressed = WatermarkStressTest.jpegBytes(resize(cropped, 0.5), 0.10f);
+        JsonNode result = verify(compressed, "combined.jpg");
+        assertTrue(result.get("matched").asBoolean());
+        assertEquals("SPREAD", result.get("method").asText());
+        assertEquals(record.get("id").asLong(), result.get("record").get("id").asLong());
     }
 
     private JsonNode register(byte[] image, String filename) throws Exception {

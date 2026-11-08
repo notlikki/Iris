@@ -90,6 +90,21 @@ class SecurityAndStorageTest {
     }
 
     @Test
+    @DisplayName("Oversized image headers are rejected before pixel decoding")
+    void oversizedHeaderRejectedBeforeDecode() throws IOException {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        ImageIO.write(new BufferedImage(10, 10, BufferedImage.TYPE_INT_RGB), "png", output);
+        byte[] bytes = output.toByteArray();
+        java.nio.ByteBuffer.wrap(bytes, 16, 4).putInt(100_000);
+        java.util.zip.CRC32 crc = new java.util.zip.CRC32();
+        crc.update(bytes, 12, 17);
+        java.nio.ByteBuffer.wrap(bytes, 29, 4).putInt((int) crc.getValue());
+        ValidationException error = assertThrows(ValidationException.class,
+                () -> imageValidator.validateAndInspect(bytes, "oversized.png"));
+        assertEquals("IMAGE_TOO_LARGE_DIMENSIONS", error.getSafeErrorCode());
+    }
+
+    @Test
     @DisplayName("Validator rejects files exceeding dimension limits")
     void testValidatorRejectsExcessiveDimensions() throws IOException {
         BufferedImage largeImage = new BufferedImage(1200, 10, BufferedImage.TYPE_INT_RGB);
