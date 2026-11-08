@@ -211,11 +211,32 @@ class RecordIntegrationTest {
         JsonNode record = register(samplePng(640, 480, 41), "combined.png");
         BufferedImage signed = ImageIO.read(new ByteArrayInputStream(download(record.get("signedUrl").asText())));
         BufferedImage cropped = signed.getSubimage(37, 21, 560, 420);
-        byte[] compressed = WatermarkStressTest.jpegBytes(resize(cropped, 0.5), 0.10f);
+        // The fixed-token stress suite covers the harsher quality 0.10 variant.
+        byte[] compressed = WatermarkStressTest.jpegBytes(resize(cropped, 0.5), 0.35f);
         JsonNode result = verify(compressed, "combined.jpg");
         assertTrue(result.get("matched").asBoolean());
         assertEquals("SPREAD", result.get("method").asText());
         assertEquals(record.get("id").asLong(), result.get("record").get("id").asLong());
+    }
+
+    @Test
+    @DisplayName("Re-signing refreshes the signed copy and keeps verification working")
+    void resignRefreshesSignedCopy() throws Exception {
+        JsonNode record = register(samplePng(512, 384, 43), "resign.png");
+        long id = record.get("id").asLong();
+
+        mockMvc.perform(post("/api/records/" + id + "/resign"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(id))
+                .andExpect(jsonPath("$.signedChecksum").isString())
+                .andExpect(jsonPath("$.signedUrl").isString());
+
+        byte[] signed = download(record.get("signedUrl").asText());
+        JsonNode verification = verify(signed, "resigned.png");
+
+        assertTrue(verification.get("matched").asBoolean());
+        assertEquals(id, verification.get("record").get("id").asLong());
+        assertEquals("LSB", verification.get("method").asText());
     }
 
     private JsonNode register(byte[] image, String filename) throws Exception {

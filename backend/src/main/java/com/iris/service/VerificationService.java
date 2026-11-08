@@ -28,6 +28,7 @@ import java.io.IOException;
 import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
 
@@ -90,6 +91,7 @@ public class VerificationService {
 
         BufferedImage candidate = validation.bufferedImage();
         String candidateChecksum = sha256(fileBytes);
+        long candidateHash = PerceptualHash.compute(candidate);
 
         String token = null;
         ImageRecord record = null;
@@ -125,9 +127,13 @@ public class VerificationService {
         }
 
         if (record == null && recordRepository.count() > 0) {
+            // Prioritise dimensions of visually nearby records so a large registry
+            // spends the finite search budget on plausible candidates first.
             List<WatermarkRecovery.Size> sizes = recordRepository.findAllByOrderByCreatedAtDesc().stream()
+                    .sorted(Comparator.comparingInt(saved -> minDistance(candidateHash, saved)))
                     .map(saved -> new WatermarkRecovery.Size(saved.getWidth(), saved.getHeight()))
-                    .distinct().toList();
+                    .distinct()
+                    .toList();
             Steganography.Extracted recovered = WatermarkRecovery.recover(candidate, sizes,
                     extracted -> watermarkCrypto.verify(extracted.token(), extracted.mac())
                             && recordRepository.findByToken(HexFormat.of().formatHex(extracted.token())).isPresent());
@@ -138,7 +144,6 @@ public class VerificationService {
             }
         }
 
-        long candidateHash = PerceptualHash.compute(candidate);
         if (record == null) {
             ImageRecord nearest = null;
             int bestDistance = Integer.MAX_VALUE;

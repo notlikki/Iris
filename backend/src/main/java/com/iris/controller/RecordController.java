@@ -43,6 +43,11 @@ public class RecordController {
         return ResponseEntity.ok(recordService.getById(id));
     }
 
+    @PostMapping("/records/{id}/resign")
+    public ResponseEntity<ImageRecordDto> resign(@PathVariable("id") Long id) {
+        return ResponseEntity.ok(recordService.resign(id));
+    }
+
     @GetMapping("/records/{id}/original")
     public ResponseEntity<Resource> getOriginal(@PathVariable("id") Long id) {
         ImageRecordDto record = recordService.getById(id);

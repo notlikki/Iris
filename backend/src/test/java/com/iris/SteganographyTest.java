@@ -223,6 +223,28 @@ class SteganographyTest {
         return result;
     }
 
+    @Test
+    @DisplayName("Watermark quality stays above 30 dB PSNR")
+    void watermarkQualityStaysAboveThreshold() {
+        BufferedImage source = sampleImage(640, 480, 57);
+        BufferedImage signed = Steganography.embed(source, token(), MAC).image();
+
+        double mse = 0;
+        for (int y = 0; y < source.getHeight(); y++) {
+            for (int x = 0; x < source.getWidth(); x++) {
+                int a = source.getRGB(x, y);
+                int b = signed.getRGB(x, y);
+                int dr = ((a >> 16) & 0xFF) - ((b >> 16) & 0xFF);
+                int dg = ((a >> 8) & 0xFF) - ((b >> 8) & 0xFF);
+                int db = (a & 0xFF) - (b & 0xFF);
+                mse += dr * dr + dg * dg + db * db;
+            }
+        }
+        mse /= 3.0 * source.getWidth() * source.getHeight();
+        double psnr = 10 * Math.log10(255.0 * 255.0 / mse);
+        assertTrue(psnr >= 30.0, "PSNR was " + psnr);
+    }
+
     private void assertPayload(Steganography.Extracted extracted) {
         assertNotNull(extracted, "Expected a recoverable payload");
         assertArrayEquals(token(), extracted.token());

@@ -4,7 +4,7 @@
 ![Spring Boot](https://img.shields.io/badge/Spring_Boot-3.3-6DB33F)
 ![React](https://img.shields.io/badge/React-19-61DAFB)
 ![Node](https://img.shields.io/badge/Node-20.19%2B-339933)
-![Tests](https://img.shields.io/badge/tests-33_passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-36_passing-brightgreen)
 
 IRIS embeds an invisible, HMAC-bound key across an image and keeps the untouched original. Re-upload a tampered, cropped, or re-compressed copy and IRIS reads the key, finds the record, restores the exact original, and reports what changed.
 
@@ -145,7 +145,7 @@ cd backend
 Expected result:
 
 ```text
-Tests run: 33, Failures: 0, Errors: 0, Skipped: 0
+Tests run: 36, Failures: 0, Errors: 0, Skipped: 0
 ```
 
 Frontend checks:
@@ -189,6 +189,10 @@ Open **http://localhost:5173**. Vite proxies `/api` to port 8080.
 2. Drop a JPEG, PNG, or BMP (up to 15 MB) and press **Sign image**.
 3. The signed copy, embedded key, checksums, and protection layers appear on the right. Click **Restore original** to download the untouched original.
 
+**Upgrade an older signed copy**
+
+Select a registered image and press **Re-sign**. IRIS re-embeds the stored original with the current watermark strength and replaces the signed file; the key and record stay the same. Do this for downloads signed before the current embedding was introduced.
+
 **Verify and recover**
 
 1. Switch to **Verify**.
@@ -226,6 +230,7 @@ curl -F "file=@tampered.jpg" http://localhost:8080/api/verify
 | `GET` | `/api/records/{id}/signed` | Stream the signed image |
 | `GET` | `/api/records/{id}/download` | Download the original as `restored_<name>` |
 | `DELETE` | `/api/records/{id}` | Delete the record, its files, and linked verifications |
+| `POST` | `/api/records/{id}/resign` | Re-embed the stored original with the current watermark strength |
 | `POST` | `/api/verify` | Verify an uploaded image and recover its record |
 | `GET` | `/api/verifications/{id}/candidate` | Stream the uploaded candidate |
 | `GET` | `/api/verifications/{id}/diff` | Stream the difference map |
@@ -280,7 +285,7 @@ iris/
 │       │   ├── dto/             API transfer objects
 │       │   └── config/          Storage, CORS, security headers
 │       ├── main/resources/      application.yml
-│       └── test/java/com/iris/  33 tests
+│       └── test/java/com/iris/  36 tests
 └── frontend/
     ├── package.json
     ├── vite.config.ts           dev proxy for /api
@@ -314,9 +319,9 @@ iris/
 These are inherent constraints, not missing features:
 
 - No invisible watermark can be guaranteed to survive arbitrary editing. Removing most pixels, extreme downsampling, heavy blur, or repainting can destroy its information. Visual matching remains a separate, approximate fallback.
-- Stronger embedding applies to newly signed copies. Previously downloaded copies must be signed again to receive the stronger signal; their existing payload format remains readable.
-- Resize recovery first tries distinct registered dimensions (newest first), then common inverse scales: 2×, 4/3×, 1.6×, 2.5×, 3×, 4×, 0.5×, and 2/3×. The search is limited to 20 attempts and 40 million normalized pixels, with at most 16 million pixels per attempt and 4096 pixels per side. A large registry or an unsearched crop/scale combination may therefore fail.
-- Automated synthetic-image tests recover the actual token and MAC after 50% and 70% resizing, 150% enlargement, PNG/BMP/JPEG conversion, a crop followed by 50% resizing and JPEG conversion, and an opaque local edit followed by JPEG quality 0.35 compression. These are reproducible test cases, not universal survival guarantees. Quality is checked with a minimum 30 dB PSNR on a representative synthetic image; visual acceptability still depends on content.
+- Geometry recovery is a finite search: registered dimensions scaled by crop fractions (1, 7/8, 3/4, 5/8, 1/2, 3/8, 1/4), followed by common inverse scales of the candidate. It is capped at 48 attempts and 160 million normalized pixels (16 million per attempt, 4096 px per side), with records ordered by perceptual closeness. A transform outside those fractions, or a very large registry, can still miss.
+- Older signed copies can be upgraded in place with **Re-sign**, which re-embeds the stored original at the current strength without changing the record or key.
+- Automated synthetic-image tests recover the actual token and MAC after 50% and 70% resizing, 150% enlargement, PNG/BMP/JPEG conversion, a crop followed by 50% resizing and JPEG conversion, a 5/8 crop followed by 50% resizing, and an opaque local edit followed by JPEG quality 0.35 compression. These are reproducible test cases, not universal survival guarantees. Quality is checked with a minimum 30 dB PSNR on a representative synthetic image; visual acceptability still depends on content.
 - Error repair now combines CRC-syndrome subsets: up to four corrupted payload bits among the 64 weakest, or up to six among the 28 weakest, plus known-marker restoration. These are conditional search limits, not guaranteed correction for arbitrary errors. This decoder improvement also applies to existing signed copies without changing their embedded format.
 - Additional stress tests run six attacks across three synthetic fixtures: JPEG quality 0.10 and 0.05, quarter-size resizing, a 3×3 box blur, a crop retaining 40% of the area, and crop → half-size resize → JPEG quality 0.10. Unsigned versions of the same attacks must not acquire an authenticated payload. The previously failing combined attack is now covered by regression assertions.
 - The resized search accepts a result only when its HMAC is valid and its token exists in the registry. It does not promote a perceptual match to an authenticated watermark match.

@@ -5,6 +5,8 @@ import './RecordViewer.css';
 
 interface Props {
   record: ImageRecordDto;
+  onResign: (id: number) => void;
+  isResigning: boolean;
 }
 
 const formatBytes = (bytes?: number) => {
@@ -24,7 +26,7 @@ const formatDate = (isoString: string) => {
   }
 };
 
-export const RecordViewer: React.FC<Props> = ({ record }) => {
+export const RecordViewer: React.FC<Props> = ({ record, onResign, isResigning }) => {
   const [preview, setPreview] = useState<'signed' | 'original'>('signed');
   const protection = record.robustEmbedded
     ? `LSB ×${record.lsbCopies} · spread ×${record.robustCopies}`
@@ -64,6 +66,16 @@ export const RecordViewer: React.FC<Props> = ({ record }) => {
               Original
             </button>
           </div>
+
+          <button
+            type="button"
+            className="btn"
+            onClick={() => onResign(record.id)}
+            disabled={isResigning}
+            title="Re-embed the stored original with the current watermark strength"
+          >
+            {isResigning ? 'Re-signing…' : 'Re-sign'}
+          </button>
 
           <a className="btn btn-primary" href={record.downloadUrl} download>
             <DownloadIcon size={15} />

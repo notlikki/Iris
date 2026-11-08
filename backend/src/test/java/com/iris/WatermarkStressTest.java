@@ -65,6 +65,17 @@ class WatermarkStressTest {
         assertTrue(correct(Steganography.extractRobust(signed)));
     }
 
+    @Test
+    void centredCropThenResizeRecoversThroughKnownSizeFractions() {
+        BufferedImage signed = Steganography.embed(
+                new SteganographyTest().sampleImage(640, 480, 61), TOKEN, MAC).image();
+        BufferedImage cropped = signed.getSubimage(120, 90, 400, 300);
+        BufferedImage resized = resize(cropped, 200, 150);
+
+        assertTrue(correct(recover(resized)),
+                "A 5/8 crop then 50% resize should recover through a known-size fraction");
+    }
+
     private static Steganography.Extracted recover(BufferedImage image) {
         var result = Steganography.extractRobust(image);
         if (correct(result)) return result;

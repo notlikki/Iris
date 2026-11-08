@@ -31,6 +31,7 @@ export const App: React.FC = () => {
   const [verification, setVerification] = useState<VerificationResponseDto | null>(null);
   const [showVerification, setShowVerification] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
+  const [resigningId, setResigningId] = useState<number | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [showAuditLogs, setShowAuditLogs] = useState(false);
@@ -146,6 +147,32 @@ export const App: React.FC = () => {
       setVerification(null);
     } else {
       setSelectedRecord(records[0] ?? null);
+    }
+  };
+
+  const handleResign = async (id: number) => {
+    setResigningId(id);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    try {
+      const response = await fetch(`/api/records/${id}/resign`, { method: 'POST' });
+      if (!response.ok) {
+        throw new Error(await readError(response, 'Re-sign failed'));
+      }
+
+      const updated: ImageRecordDto = await response.json();
+      setSelectedRecord(updated);
+      setShowVerification(false);
+      setSuccessMessage(`Record #${id} re-signed with the current watermark strength.`);
+      await fetchRecords();
+      if (showAuditLogs) {
+        fetchAuditLogs();
+      }
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Could not re-sign the record.');
+    } finally {
+      setResigningId(null);
     }
   };
 
@@ -296,7 +323,11 @@ export const App: React.FC = () => {
           {showVerification && verification ? (
             <VerificationViewer verification={verification} />
           ) : selectedRecord ? (
-            <RecordViewer record={selectedRecord} />
+            <RecordViewer
+              record={selectedRecord}
+              onResign={handleResign}
+              isResigning={resigningId === selectedRecord.id}
+            />
           ) : (
             <section className="panel empty-viewer">
               <div>

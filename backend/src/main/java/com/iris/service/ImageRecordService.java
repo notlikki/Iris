@@ -162,6 +162,43 @@ public class ImageRecordService {
         return ImageCodec.read(storageService.readBytes(record.getOriginalStorageKey()));
     }
 
+    /**
+     * Re-embeds the stored original with the current watermark strength. The
+     * record keeps its key, so existing verification links continue to work.
+     */
+    @Transactional
+    public ImageRecordDto resign(Long id) {
+        ImageRecord record = requireRecord(id);
+        BufferedImage original = loadOriginalImage(record);
+        if (original == null) {
+            throw new IrisException(HttpStatus.INTERNAL_SERVER_ERROR, "ORIGINAL_UNREADABLE",
+                    "The stored original could not be decoded.");
+        }
+
+        byte[] tokenBytes = HexFormat.of().parseHex(record.getToken());
+        byte[] mac = watermarkCrypto.mac(tokenBytes);
+        Steganography.EmbedResult embedded = Steganography.embed(original, tokenBytes, mac);
+
+        FileStorageService.StoredFileResult signedStored =
+                storageService.storeBytes(ImageCodec.toPng(embedded.image()), ".png");
+        String previousSignedKey = record.getSignedStorageKey();
+
+        record.setSignedStorageKey(signedStored.storageKey());
+        record.setSignedChecksum(signedStored.checksum());
+        record.setSignedSize(signedStored.size());
+        record.setLsbEmbedded(embedded.lsbEmbedded());
+        record.setLsbCopies(embedded.lsbCopies());
+        record.setRobustEmbedded(embedded.robustEmbedded());
+        record.setRobustCopies(embedded.robustCopies());
+        record = recordRepository.save(record);
+
+        storageService.deleteSilently(previousSignedKey);
+        auditService.recordEvent(AuditEventType.REGISTER_SUCCESS, record.getId(),
+                "Image re-signed with the current watermark strength", null);
+
+        return ImageRecordDto.fromEntity(record);
+    }
+
     public ImageRecord requireRecord(Long id) {
         return recordRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Image record with ID " + id + " was not found."));
