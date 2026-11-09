@@ -2,7 +2,7 @@
 
 # IRIS
 
-**Invisible image signing & recovery**
+**Image Recover And Integrated Security**
 
 An image carries its own registry key. Re-upload a tampered, cropped, or
 re-compressed copy and IRIS finds the record, restores the exact original,
