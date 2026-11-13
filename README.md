@@ -14,7 +14,7 @@ and shows what changed.
 ![Node](https://img.shields.io/badge/Node-20.19%2B-339933)
 ![Tests](https://img.shields.io/badge/tests-53_passing-brightgreen)
 
-[Quick start](#quick-start) · [How it works](#how-it-works) · [Benchmarks](#tests-and-benchmarks) · [API](#api) · [Design limits](#design-limits)
+[Quick start](#quick-start) · [Deploy](#deploy-from-github) · [How it works](#how-it-works) · [Benchmarks](#tests-and-benchmarks) · [API](#api) · [Design limits](#design-limits)
 
 </div>
 
@@ -135,8 +135,8 @@ cd ../backend && ./mvnw spring-boot:run
 
 Open **http://localhost:8080**. On Windows use `mvnw.cmd spring-boot:run`.
 
-> **Repository access.** The repository is private. Make it public or invite
-> collaborators before sharing the clone command.
+> **Repository access.** The clone commands assume the repository is public. If
+> it is private, authenticate with Git or request access first.
 
 ### 3. Run the tests
 
@@ -146,6 +146,90 @@ cd backend
 ```
 
 Expected: **53 tests, 0 failures**.
+
+---
+
+## Deploy from GitHub
+
+Build one self-contained jar from a fresh clone and run it. The jar serves both
+the API and the built UI on **http://localhost:8080**; set
+`IRIS_SIGNING_SECRET` once for anything beyond a local trial. Run only one
+instance per data directory — H2 locks the database file.
+
+### macOS / Linux
+
+```bash
+# install: clone the repository
+git clone https://github.com/notlikki/Iris.git
+cd Iris
+
+# build the UI, then package the backend jar
+(cd frontend && npm ci && npm run build)
+(cd backend && ./mvnw -DskipTests package)
+
+# deploy: run it
+cd backend
+export IRIS_SIGNING_SECRET="$(openssl rand -hex 32)"
+java -jar target/iris-backend-1.0.0.jar
+```
+
+### Windows (PowerShell)
+
+```powershell
+# install: clone the repository
+git clone https://github.com/notlikki/Iris.git
+Set-Location Iris
+
+# build the UI, then package the backend jar
+Push-Location frontend; npm ci; npm run build; Pop-Location
+Push-Location backend; .\mvnw.cmd -DskipTests package; Pop-Location
+
+# deploy: run it
+Set-Location backend
+$env:IRIS_SIGNING_SECRET = -join ((1..64) | ForEach-Object { '{0:x}' -f (Get-Random -Max 16) })
+java -jar target\iris-backend-1.0.0.jar
+```
+
+### Run in the background
+
+```bash
+# macOS / Linux
+cd backend
+nohup java -jar target/iris-backend-1.0.0.jar > iris.log 2>&1 &
+pkill -f 'iris-backend-1.0.0.jar'   # stop
+```
+
+```powershell
+# Windows
+Set-Location backend
+Start-Process java -ArgumentList '-jar','target\iris-backend-1.0.0.jar' `
+  -RedirectStandardOutput iris.log -RedirectStandardError iris.err
+Get-CimInstance Win32_Process |
+  Where-Object { $_.CommandLine -like '*iris-backend-1.0.0.jar*' } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId }   # stop
+```
+
+### Update a deployment
+
+```bash
+# macOS / Linux
+git pull
+(cd frontend && npm ci && npm run build)
+(cd backend && ./mvnw -DskipTests package)
+# restart the java process
+```
+
+```powershell
+# Windows
+git pull
+Push-Location frontend; npm ci; npm run build; Pop-Location
+Push-Location backend; .\mvnw.cmd -DskipTests package; Pop-Location
+# restart the java process
+```
+
+Data stays in `backend/data/` (`irisdb` plus `storage/`) across rebuilds. See
+[Configuration](#configuration) for the database, storage, signing secret, and
+port settings.
 
 ---
 
